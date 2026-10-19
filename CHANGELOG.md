@@ -6,6 +6,22 @@ All notable changes to this project are documented here.
 
 ### Added
 
+**Per-cycle activity baseline**
+
+- The poller now keeps a bounded rolling window of events observed per complete poll
+  cycle (`src/activity-baseline.ts`). Each cycle is compared with the mean and sample
+  standard deviation of the cycles before it and classified as `normal`, `spike`
+  (z ≥ 3) or `drop` (z ≤ −3); until ten cycles exist it reports `warming-up`. Partial
+  cycles — one target in backoff or failed — are not recorded, so an RPC problem is not
+  mistaken for a quiet chain.
+- Anomalies are logged once as a bounded `[poller] activity spike|drop: …` line and
+  counted in `mimir_bot_activity_anomalies_total`.
+- `GET /health` exposes the full snapshot at `poller.activity` (window size, samples,
+  last value, baseline mean and standard deviation, z-score, classification and anomaly
+  count). Both metrics endpoints expose the last cycle's events, the baseline mean, the
+  z-score and the anomaly count (`mimir_bot_*` and `mimir_telegram_activity_*`).
+- The health-report JSON schema is updated with the new closed `activity` object.
+
 **Malformed-event robustness**
 
 - `clip()` is now applied to the `category` field in `claim_created` notifications (bounded
