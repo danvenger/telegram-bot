@@ -18,6 +18,8 @@ import {
   NOTIFICATION_MD,
   PAUSE_MESSAGES,
   RESUME_MESSAGES,
+  SUPPORTED_LOCALES,
+  getMessages,
 } from "../dist/i18n.js";
 
 /** Telegram's MarkdownV2 reserved characters. */
@@ -733,6 +735,36 @@ test("i18n export: every entry in NOTIFICATION_MD is exhaustively verified", () 
       assertValidMarkdownV2(rendered, `NOTIFICATION_MD.${key}`);
     } else {
       assert.fail(`Unexpected entry type for NOTIFICATION_MD.${key}: ${typeof value}`);
+    }
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Locale bundles: every shipped MarkdownV2 string lints ────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("i18n export: every locale bundle contains only valid MarkdownV2", () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    const bundle = getMessages(locale);
+
+    assertValidMarkdownV2(bundle.HELP_TITLE, `${locale}.HELP_TITLE`);
+
+    for (const table of ["PAUSE_MESSAGES", "RESUME_MESSAGES"]) {
+      for (const [key, message] of Object.entries(bundle[table])) {
+        assert.equal(typeof message, "string", `${locale}.${table}.${key} must be a string`);
+        assertValidMarkdownV2(message, `${locale}.${table}.${key}`);
+      }
+    }
+
+    for (const [key, value] of Object.entries(bundle.NOTIFICATION_MD)) {
+      if (typeof value === "string") {
+        assertValidMarkdownV2(value, `${locale}.NOTIFICATION_MD.${key}`);
+        continue;
+      }
+      const args = Array.from({ length: value.length }, (_, index) => `{arg${index}}`);
+      const rendered = value(...args);
+      assert.equal(typeof rendered, "string", `${locale}.NOTIFICATION_MD.${key} must render`);
+      assertValidMarkdownV2(rendered, `${locale}.NOTIFICATION_MD.${key}`);
     }
   }
 });

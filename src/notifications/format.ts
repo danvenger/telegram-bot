@@ -29,12 +29,7 @@ import { groupDigestEvents } from "./digest-grouping.js";
 import { confidenceIndicator } from "./confidence.js";
 import { settlementLines } from "./settlement.js";
 import type { StellarConfig } from "../config.js";
-import {
-  EXPLORER_BUTTON_TEXT,
-  MIMIR_APP_BUTTON_TEXT,
-  NOTIFICATION_MD,
-  NOTIFICATION_PLAIN,
-} from "../i18n.js";
+import { messages } from "../i18n.js";
 
 /** Telegram's MarkdownV2 reserved set. All of it must be escaped, everywhere. */
 const MDV2_RESERVED = /[_*[\]()~`>#+\-=|{}.!\\]/g;
@@ -276,10 +271,10 @@ export function explorerKeyboard(
 ): ExplorerKeyboard | undefined {
   const buttons: ExplorerButton[] = [];
   const explorerUrl = eventExplorerUrl(config, event);
-  if (explorerUrl) buttons.push({ text: EXPLORER_BUTTON_TEXT, url: explorerUrl });
+  if (explorerUrl) buttons.push({ text: messages().EXPLORER_BUTTON_TEXT, url: explorerUrl });
 
   const appUrl = appUrlFor(event, config.mimirAppUrl);
-  if (appUrl) buttons.push({ text: MIMIR_APP_BUTTON_TEXT, url: appUrl });
+  if (appUrl) buttons.push({ text: messages().MIMIR_APP_BUTTON_TEXT, url: appUrl });
 
   if (buttons.length === 0) return undefined;
   return { inline_keyboard: [buttons] };
@@ -376,21 +371,21 @@ function headline(event: DecodedEvent): string | null {
   switch (p.name) {
     // ── mimir-market ────────────────────────────────────────────────────────
     case "claim_created":
-      return NOTIFICATION_MD.claimCreated(
+      return messages().NOTIFICATION_MD.claimCreated(
         String(p.claimId),
         escapeMd(clip(p.category)),
         who(p.creator),
       );
 
     case "claim_challenged":
-      return NOTIFICATION_MD.claimChallenged(
+      return messages().NOTIFICATION_MD.claimChallenged(
         String(p.claimId),
         usdc(p.stake),
         who(p.challenger),
       );
 
     case "claim_resolved":
-      return NOTIFICATION_MD.claimResolved(
+      return messages().NOTIFICATION_MD.claimResolved(
         String(p.claimId),
         escapeMd(winnerSideLabel(p.winnerSide)),
         escapeMd(confidenceIndicator(p.confidence)),
@@ -398,11 +393,11 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "claim_cancelled":
-      return NOTIFICATION_MD.claimCancelled(String(p.claimId));
+      return messages().NOTIFICATION_MD.claimCancelled(String(p.claimId));
 
     case "market_settled": {
       const lines = settlementLines(p).map(escapeMd);
-      return NOTIFICATION_MD.marketSettled(
+      return messages().NOTIFICATION_MD.marketSettled(
         String(p.claimId),
         usdc(p.totalPaid),
         usdc(p.totalFees),
@@ -412,7 +407,7 @@ function headline(event: DecodedEvent): string | null {
     }
 
     case "challenger_paid":
-      return NOTIFICATION_MD.challengerPaid(
+      return messages().NOTIFICATION_MD.challengerPaid(
         String(p.claimId),
         who(p.challenger),
         usdc(p.stake),
@@ -422,17 +417,17 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "fee_claimed":
-      return NOTIFICATION_MD.feeClaimed(usdc(p.amount), who(p.recipient));
+      return messages().NOTIFICATION_MD.feeClaimed(usdc(p.amount), who(p.recipient));
 
     case "withdrawal":
-      return NOTIFICATION_MD.withdrawal(usdc(p.amount), who(p.to));
+      return messages().NOTIFICATION_MD.withdrawal(usdc(p.amount), who(p.to));
 
     case "withdrawal_pending":
-      return NOTIFICATION_MD.withdrawalPending(usdc(p.amount), who(p.to));
+      return messages().NOTIFICATION_MD.withdrawalPending(usdc(p.amount), who(p.to));
 
     // ── mimir-squad ─────────────────────────────────────────────────────────
     case "market_created":
-      return NOTIFICATION_MD.marketCreated(
+      return messages().NOTIFICATION_MD.marketCreated(
         String(p.marketId),
         escapeMd(clip(p.question)),
         who(p.captain),
@@ -441,7 +436,7 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "deposited":
-      return NOTIFICATION_MD.deposited(
+      return messages().NOTIFICATION_MD.deposited(
         String(p.marketId),
         usdc(p.amount),
         escapeMd(squadSideLabel(p.side)),
@@ -449,7 +444,7 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "withdrawn":
-      return NOTIFICATION_MD.withdrawn(
+      return messages().NOTIFICATION_MD.withdrawn(
         String(p.marketId),
         who(p.participant),
         usdc(p.amount),
@@ -457,7 +452,7 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "resolved":
-      return NOTIFICATION_MD.resolved(
+      return messages().NOTIFICATION_MD.resolved(
         String(p.marketId),
         escapeMd(squadSideLabel(p.result)),
         usdc(p.poolA),
@@ -465,7 +460,7 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "claimed":
-      return NOTIFICATION_MD.claimed(
+      return messages().NOTIFICATION_MD.claimed(
         String(p.marketId),
         who(p.participant),
         usdc(p.net),
@@ -474,7 +469,7 @@ function headline(event: DecodedEvent): string | null {
       );
 
     case "fees_claimed":
-      return NOTIFICATION_MD.feesClaimedSquad(usdc(p.amount), who(p.recipient));
+      return messages().NOTIFICATION_MD.feesClaimedSquad(usdc(p.amount), who(p.recipient));
 
     // Admin events and undecodable shapes get no notification. The poller logs
     // them so a silent bot is distinguishable from an unteachable one.
@@ -523,7 +518,7 @@ export function formatEvent(
     if (head === null) return null;
     const body = `${head}\n${footer(config, event)}`;
     if (config.channelPreviewMode) {
-      return `${NOTIFICATION_MD.previewModePrefix}\n${body}`;
+      return `${messages().NOTIFICATION_MD.previewModePrefix}\n${body}`;
     }
     return body;
   } catch (err) {
@@ -563,17 +558,17 @@ function plainHeadline(event: DecodedEvent): string | null {
   switch (p.name) {
     // ── mimir-market ────────────────────────────────────────────────────────
     case "claim_created":
-      return NOTIFICATION_PLAIN.claimCreated(p.claimId, clip(p.category), plainWho(p.creator));
+      return messages().NOTIFICATION_PLAIN.claimCreated(p.claimId, clip(p.category), plainWho(p.creator));
 
     case "claim_challenged":
-      return NOTIFICATION_PLAIN.claimChallenged(
+      return messages().NOTIFICATION_PLAIN.claimChallenged(
         p.claimId,
         plainUsdc(p.stake),
         plainWho(p.challenger),
       );
 
     case "claim_resolved":
-      return NOTIFICATION_PLAIN.claimResolved(
+      return messages().NOTIFICATION_PLAIN.claimResolved(
         p.claimId,
         winnerSideLabel(p.winnerSide),
         confidenceIndicator(p.confidence),
@@ -581,11 +576,11 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "claim_cancelled":
-      return NOTIFICATION_PLAIN.claimCancelled(p.claimId);
+      return messages().NOTIFICATION_PLAIN.claimCancelled(p.claimId);
 
     case "market_settled": {
       const lines = settlementLines(p);
-      return NOTIFICATION_PLAIN.marketSettled(
+      return messages().NOTIFICATION_PLAIN.marketSettled(
         p.claimId,
         plainUsdc(p.totalPaid),
         plainUsdc(p.totalFees),
@@ -595,7 +590,7 @@ function plainHeadline(event: DecodedEvent): string | null {
     }
 
     case "challenger_paid":
-      return NOTIFICATION_PLAIN.challengerPaid(
+      return messages().NOTIFICATION_PLAIN.challengerPaid(
         p.claimId,
         plainWho(p.challenger),
         plainUsdc(p.stake),
@@ -605,17 +600,17 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "fee_claimed":
-      return NOTIFICATION_PLAIN.feeClaimed(plainUsdc(p.amount), plainWho(p.recipient));
+      return messages().NOTIFICATION_PLAIN.feeClaimed(plainUsdc(p.amount), plainWho(p.recipient));
 
     case "withdrawal":
-      return NOTIFICATION_PLAIN.withdrawal(plainUsdc(p.amount), plainWho(p.to));
+      return messages().NOTIFICATION_PLAIN.withdrawal(plainUsdc(p.amount), plainWho(p.to));
 
     case "withdrawal_pending":
-      return NOTIFICATION_PLAIN.withdrawalPending(plainUsdc(p.amount), plainWho(p.to));
+      return messages().NOTIFICATION_PLAIN.withdrawalPending(plainUsdc(p.amount), plainWho(p.to));
 
     // ── mimir-squad ─────────────────────────────────────────────────────────
     case "market_created":
-      return NOTIFICATION_PLAIN.marketCreated(
+      return messages().NOTIFICATION_PLAIN.marketCreated(
         p.marketId,
         clip(p.question),
         plainWho(p.captain),
@@ -624,7 +619,7 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "deposited":
-      return NOTIFICATION_PLAIN.deposited(
+      return messages().NOTIFICATION_PLAIN.deposited(
         p.marketId,
         plainUsdc(p.amount),
         squadSideLabel(p.side),
@@ -632,7 +627,7 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "withdrawn":
-      return NOTIFICATION_PLAIN.withdrawn(
+      return messages().NOTIFICATION_PLAIN.withdrawn(
         p.marketId,
         plainWho(p.participant),
         plainUsdc(p.amount),
@@ -640,7 +635,7 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "resolved":
-      return NOTIFICATION_PLAIN.resolved(
+      return messages().NOTIFICATION_PLAIN.resolved(
         p.marketId,
         squadSideLabel(p.result),
         plainUsdc(p.poolA),
@@ -648,7 +643,7 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "claimed":
-      return NOTIFICATION_PLAIN.claimed(
+      return messages().NOTIFICATION_PLAIN.claimed(
         p.marketId,
         plainWho(p.participant),
         plainUsdc(p.net),
@@ -657,7 +652,7 @@ function plainHeadline(event: DecodedEvent): string | null {
       );
 
     case "fees_claimed":
-      return NOTIFICATION_PLAIN.feesClaimedSquad(plainUsdc(p.amount), plainWho(p.recipient));
+      return messages().NOTIFICATION_PLAIN.feesClaimedSquad(plainUsdc(p.amount), plainWho(p.recipient));
 
     // Same set as `headline`: admin events and undecodable shapes get nothing.
     case "oracle_changed":
@@ -717,7 +712,7 @@ function minimalPlainTextEvent(event: DecodedEvent): string {
       ? `ledger ${event.ledger}`
       : "ledger unknown";
   const eventId = typeof event?.eventId === "string" && event.eventId ? event.eventId : "";
-  return clipPlainText(NOTIFICATION_PLAIN.minimal(source, ledger, eventId));
+  return clipPlainText(messages().NOTIFICATION_PLAIN.minimal(source, ledger, eventId));
 }
 
 /**
@@ -733,7 +728,7 @@ export function formatFallbackEvent(
   const ledger = escapeMd(String(event.ledger ?? "unknown"));
   const safeReason = escapeMd(safeErrorMessage(reason));
   const txPart = event.txHash ? ` · [tx](${txExplorerUrl(config, event.txHash)})` : "";
-  return NOTIFICATION_MD.fallbackEvent(source, contract, ledger, safeReason, txPart);
+  return messages().NOTIFICATION_MD.fallbackEvent(source, contract, ledger, safeReason, txPart);
 }
 
 /**
@@ -771,7 +766,7 @@ export function previewMessage(config: StellarConfig & { linkPreviewMarket?: boo
       },
     };
     const formatted = formatEvent({ ...config, channelPreviewMode: false }, sampleEvent) ?? "";
-    return `${NOTIFICATION_MD.channelPreviewSquad}\n${settingsLine}\n\n${formatted}`;
+    return `${messages().NOTIFICATION_MD.channelPreviewSquad}\n${settingsLine}\n\n${formatted}`;
   }
 
   const sampleEvent: DecodedEvent = {
@@ -794,6 +789,6 @@ export function previewMessage(config: StellarConfig & { linkPreviewMarket?: boo
     },
   };
   const formatted = formatEvent({ ...config, channelPreviewMode: false }, sampleEvent) ?? "";
-  return `${NOTIFICATION_MD.channelPreviewMarket}\n${settingsLine}\n\n${formatted}`;
+  return `${messages().NOTIFICATION_MD.channelPreviewMarket}\n${settingsLine}\n\n${formatted}`;
 }
 

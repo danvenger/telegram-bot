@@ -34,14 +34,7 @@ import {
   type AuditFileSummary,
   type AuditLog,
 } from "./audit.js";
-import {
-  AUDIT_CLI_HINT,
-  COMMAND_DESCRIPTIONS,
-  HELP_INTRO,
-  HELP_TITLE,
-  PAUSE_MESSAGES,
-  RESUME_MESSAGES,
-} from "./i18n.js";
+import { messages } from "./i18n.js";
 import { helpDetailMessage } from "./commands/help-detail.js";
 import { aboutMessage } from "./commands/about.js";
 export { helpDetailMessage, COMMAND_DETAILS, type CommandDetail } from "./commands/help-detail.js";
@@ -140,19 +133,32 @@ export function validateBotTokenShape(raw: unknown): BotTokenShapeResult {
   return { ok: true };
 }
 
-/** Shared metadata for handlers, help, and Telegram's command menu. */
-export const COMMANDS = [
-  { command: "start", description: COMMAND_DESCRIPTIONS.start, operatorOnly: false },
-  { command: "help", description: COMMAND_DESCRIPTIONS.help, operatorOnly: false },
-  { command: "about", description: COMMAND_DESCRIPTIONS.about, operatorOnly: false },
-  { command: "status", description: COMMAND_DESCRIPTIONS.status, operatorOnly: false },
-  { command: "audit", description: COMMAND_DESCRIPTIONS.audit, operatorOnly: true },
-  { command: "contracts", description: COMMAND_DESCRIPTIONS.contracts, operatorOnly: false },
-  { command: "health", description: COMMAND_DESCRIPTIONS.health, operatorOnly: false },
-  { command: "preview", description: COMMAND_DESCRIPTIONS.preview, operatorOnly: false },
-  { command: "pause", description: COMMAND_DESCRIPTIONS.pause, operatorOnly: true },
-  { command: "resume", description: COMMAND_DESCRIPTIONS.resume, operatorOnly: true },
+/** Command name and whether it is operator-only, in help/registration order. */
+const COMMAND_SPECS = [
+  ["start", false],
+  ["help", false],
+  ["about", false],
+  ["status", false],
+  ["audit", true],
+  ["contracts", false],
+  ["health", false],
+  ["preview", false],
+  ["pause", true],
+  ["resume", true],
 ] as const;
+
+/**
+ * Shared metadata for handlers, help, and Telegram's command menu. Descriptions
+ * are getters so they follow the active locale rather than the language that
+ * happened to be selected when this module was first imported.
+ */
+export const COMMANDS = COMMAND_SPECS.map(([command, operatorOnly]) => ({
+  command,
+  get description(): string {
+    return messages().COMMAND_DESCRIPTIONS[command];
+  },
+  operatorOnly,
+}));
 
 function visibleCommands(config?: BotConfig) {
   return COMMANDS.filter((command) =>
@@ -161,6 +167,7 @@ function visibleCommands(config?: BotConfig) {
 }
 
 export function helpMessage(config?: BotConfig): string {
+  const { HELP_TITLE, HELP_INTRO } = messages();
   return [
     HELP_TITLE,
     "",
@@ -352,7 +359,7 @@ function ago(timestamp: number | null, nowMs: number = Date.now()): string {
 function renderAuditForTelegram(summary: AuditFileSummary, tail: number): string {
   const header = `*Audit* — ${summary.file}`;
   const report = renderAuditReport(summary, { tail });
-  return `${header}\n\n${report}\n\n${AUDIT_CLI_HINT}`;
+  return `${header}\n\n${report}\n\n${messages().AUDIT_CLI_HINT}`;
 }
 
 function cursorPreview(cursor: string | null): string {
@@ -599,6 +606,7 @@ export function contractsMessage(config: BotConfig): string {
 
 /** Exact operator replies, exported for deterministic Telegram payload tests. */
 export function pauseMessage(result: PollerPauseResult): string {
+  const { PAUSE_MESSAGES } = messages();
   switch (result) {
     case "paused":
       return PAUSE_MESSAGES.paused;
@@ -610,6 +618,7 @@ export function pauseMessage(result: PollerPauseResult): string {
 }
 
 export function resumeMessage(result: PollerResumeResult): string {
+  const { RESUME_MESSAGES } = messages();
   switch (result) {
     case "resumed":
       return RESUME_MESSAGES.resumed;

@@ -51,6 +51,7 @@ import {
   parseNotificationFeatureFlags,
   type NotificationFeatureFlags,
 } from "./notifications/featureFlags.js";
+import { DEFAULT_LOCALE, normalizeLocale, SUPPORTED_LOCALES, type Locale } from "./i18n.js";
 
 /** Named Stellar networks the bot understands. `custom` is any other passphrase. */
 export type StellarNetwork = "testnet" | "mainnet" | "futurenet" | "custom";
@@ -210,6 +211,8 @@ export interface BotConfig extends StellarConfig {
   csvOutputFile: string;
   /** Coarse notification feature flags (see NOTIFY_* env vars). */
   featureFlags: NotificationFeatureFlags;
+  /** Language for user-facing text (BOT_LOCALE); English when unset. */
+  locale: Locale;
   /** Append-only JSONL audit trail (see src/audit.ts). Empty disables it. */
   auditFile: string;
   /**
@@ -513,6 +516,25 @@ function collector(profile: Record<string, string>) {
         );
       }
       return value;
+    },
+
+    /**
+     * A supported language code. Accepts a region suffix (`es-MX`) because
+     * platforms often expose the deployment's full locale, but an unknown
+     * language fails boot rather than silently rendering English.
+     */
+    locale(name: string, fallback: Locale): Locale {
+      const raw = get(name);
+      if (raw === undefined) return fallback;
+      const normalized = normalizeLocale(raw);
+      if (normalized === null) {
+        problems.push(
+          `${name} must be one of ${SUPPORTED_LOCALES.join(", ")} ` +
+            `(a region suffix such as es-MX is accepted); got "${raw}"`,
+        );
+        return fallback;
+      }
+      return normalized;
     },
 
     contractVersion(name: string, fallback: string): string {
@@ -831,6 +853,7 @@ export function loadConfig(): BotConfig {
     interSendDelayMs: c.int("INTER_SEND_DELAY_MS", DEFAULTS.interSendDelayMs, 0),
     metricsPort: c.optionalPort("METRICS_PORT"),
     notificationCategories: notificationCategoriesFrom(),
+    locale: c.locale("BOT_LOCALE", DEFAULT_LOCALE),
     csvOutputFile: path.resolve(process.cwd(), c.get("CSV_OUTPUT_FILE") ?? DEFAULTS.csvOutputFile),
     featureFlags: featureFlagsParsed.flags,
     // Resolved like the cursor file: relative paths anchor to the process cwd.
@@ -1024,6 +1047,7 @@ const CONFIG_KEYS: readonly ConfigKeySpec[] = [
   { key: "HEALTH_STALE_MS", secret: false, hasBuiltInDefault: true },
   { key: "SHUTDOWN_TIMEOUT_MS", secret: false, hasBuiltInDefault: true },
   { key: "TELEGRAM_SEND_TIMEOUT_MS", secret: false, hasBuiltInDefault: true },
+  { key: "BOT_LOCALE", secret: false, hasBuiltInDefault: true },
   { key: "CHANNEL_PREVIEW_MODE", secret: false, hasBuiltInDefault: true },
   { key: "LINK_PREVIEW_MARKET", secret: false, hasBuiltInDefault: true },
   { key: "LINK_PREVIEW_SQUAD", secret: false, hasBuiltInDefault: true },

@@ -28,6 +28,14 @@ export const COMMAND_DETAILS: Record<string, CommandDetail> = {
     description: "Show general help listing all commands, or detailed help with usage, arguments, and examples for a specific command.",
     examples: ["/help", "/help preview", "/help audit", "/help status"],
   },
+  about: {
+    usage: "/about",
+    arguments: "None",
+    whoCanRun: "Anyone",
+    operatorOnly: false,
+    description: "Show the bot version, the Stellar network it watches, and the repository it is built from.",
+    examples: ["/about"],
+  },
   status: {
     usage: "/status",
     arguments: "None",

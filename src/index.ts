@@ -21,6 +21,7 @@ import {
   networkLabel,
 } from "./config.js";
 import { formatFeatureFlags } from "./notifications/featureFlags.js";
+import { setLocale } from "./i18n.js";
 import { auditEntry, createAuditLog } from "./audit.js";
 import { InstanceLockError } from "./instanceLock.js";
 import { attachConsole, createLogCapture, Logger, secretsFor } from "./logger.js";
@@ -107,6 +108,9 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  // Select the language before anything renders: every user-facing string is
+  // read from the active bundle at render time, never captured at import time.
+  setLocale(config.locale);
 
   // Register this process's secrets before anything can fail: every
   // operator-facing error goes through the scrubber, so a call site cannot
@@ -148,6 +152,9 @@ async function main(): Promise<void> {
   );
   console.log(`[boot] cursor file  ${config.cursorFile}`);
   console.log(`[boot] flags        ${formatFeatureFlags(config.featureFlags)}`);
+  console.log(
+    `[boot] locale       ${config.locale}${config.locale === "en" ? "" : " (translated text)"}`,
+  );
   console.log(`[boot] audit file   ${config.auditFile}`);
   console.log(`[boot] lock file    ${config.lockFile}`);
   console.log(`[boot] shutdown     ${config.shutdownTimeoutMs}ms drain budget`);

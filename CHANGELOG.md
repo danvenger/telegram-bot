@@ -6,6 +6,23 @@ All notable changes to this project are documented here.
 
 ### Added
 
+**Selectable bot language**
+
+- `src/i18n.ts` now exposes locale bundles behind `getMessages(locale)` and an
+  active-locale accessor (`setLocale` / `messages` / `getLocale`), with `en` as
+  the base and fallback bundle. A bundle may translate any subset of keys; the
+  rest resolve to English.
+- `BOT_LOCALE` selects the language at startup (`en` default, `es` shipped).
+  Case and a region suffix (`es-MX`, `es_419`) are accepted; an unsupported
+  value fails config validation with the supported list. The choice is logged at
+  boot and reported by `configProvenance()`.
+- Notifications, the inline keyboard labels, `/help`, the Telegram command menu
+  and pause/resume replies now render from the active bundle, so switching
+  languages does not require rebuilding the call sites.
+- `docs/translating.md` documents choosing and adding a language;
+  `tests/locale.test.mjs` covers selection and config validation, and the
+  MarkdownV2 linter now validates every shipped locale.
+
 **Per-cycle activity baseline**
 
 - The poller now keeps a bounded rolling window of events observed per complete poll

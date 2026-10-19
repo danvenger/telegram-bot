@@ -19,6 +19,8 @@ All user-facing localization templates live in [`src/i18n.ts`](../src/i18n.ts). 
 | `NOTIFICATION_MD` | **MarkdownV2** | Primary event notification templates (`claimCreated`, `claimChallenged`, etc.), fallback template (`fallbackEvent`), and preview headers (`previewModePrefix`, `channelPreviewMarket`, `channelPreviewSquad`). |
 | `NOTIFICATION_PLAIN` | **Plain text** | 1-to-1 plain-text mirror of `NOTIFICATION_MD` (plus `minimal`), sent without `parse_mode` if Telegram rejects the MarkdownV2 payload or when plain text is requested. |
 | `EXPLORER_BUTTON_TEXT` | **Plain text** | Label on the inline keyboard button linking to Stellar Expert (`"View on Explorer"`). Inline button labels do not parse Markdown. |
+| `MIMIR_APP_BUTTON_TEXT` | **Plain text** | Label on the inline keyboard button that opens the Mimir web app (`"Open in Mimir"`), present only when `MIMIR_APP_URL` is configured. |
+| `SETTLEMENT_LABELS` | **Plain text** | Row labels for the settlement breakdown (`Owed to challengers`, `Total fees`, `Dust`). The caller escapes them when the surrounding message is MarkdownV2. |
 
 ### Why Both `NOTIFICATION_MD` and `NOTIFICATION_PLAIN` Exist
 
@@ -228,3 +230,48 @@ Before opening a pull request that edits or adds strings in [`src/i18n.ts`](../s
   npm test
   ```
   Specifically confirm that both [`tests/i18n.test.mjs`](../tests/i18n.test.mjs) (snapshot and plain-text boundary checks) and [`tests/markdown-lint.test.mjs`](../tests/markdown-lint.test.mjs) (MarkdownV2 tokenizer and reserved-character linter) pass with zero errors.
+
+---
+
+## 7. Choosing a Language
+
+`src/i18n.ts` ships one English base bundle plus a translated bundle per
+language. The exported constants (`HELP_TITLE`, `NOTIFICATION_MD`, …) remain the
+English base, so existing imports and tests are unaffected. Everything that
+renders for users reads the **active** bundle through `messages()` at call time
+(`bot.ts` for help, the command menu and pause/resume replies; `format.ts` for
+notifications and keyboard buttons).
+
+Select the language with `BOT_LOCALE` (see [`.env.example`](../.env.example)):
+
+```bash
+BOT_LOCALE=es        # Spanish
+BOT_LOCALE=es-MX     # accepted: the region suffix is ignored
+```
+
+- `en` (default) and `es` are supported. An unrecognized value fails startup with
+  the supported list instead of silently rendering English.
+- Startup logs the selected locale (`[boot] locale …`) so a deployment can be
+  checked without sending a message.
+- `tests/locale.test.mjs` covers selection and config validation;
+  `tests/markdown-lint.test.mjs` lints every shipped locale's MarkdownV2.
+
+## 8. Adding a Language
+
+1. Add the code to `SUPPORTED_LOCALES` (for example `"de"`) — it becomes a
+   `Locale` and is accepted by `BOT_LOCALE`.
+2. Add a bundle to `BUNDLES` in `src/i18n.ts`. The bundle is typed
+   `MessageOverrides`, so **every key is optional**: untranslated keys fall back
+   to English. A translation can land incrementally, but a partially translated
+   bundle renders a mixed-language UI — translate a whole table before shipping.
+3. Keep the same parameter order and meaning for every template function, and
+   pre-escape static MarkdownV2 characters exactly as the English bundle does.
+   Never wrap `${...}` parameters in `escapeMd()` inside `i18n.ts`.
+4. Run the lint and locale tests:
+
+   ```bash
+   npm run build
+   node --test --test-timeout=120000 tests/locale.test.mjs tests/markdown-lint.test.mjs
+   ```
+
+The same review checklist in section 6 applies to every new language.

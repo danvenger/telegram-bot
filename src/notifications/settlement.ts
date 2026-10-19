@@ -6,6 +6,7 @@
  * two decimal places.
  */
 
+import { messages } from "../i18n.js";
 import { formatUsdc } from "../stellar/decode.js";
 
 export interface SettlementPayload {
@@ -61,22 +62,23 @@ export function settlementBreakdown(payload: SettlementPayload): SettlementItem[
   const sum = owed + fees + dust;
   const paid = payload.totalPaid !== undefined ? toBigInt(payload.totalPaid) : 0n;
   const gross = paid > sum ? paid : sum;
+  const labels = messages().SETTLEMENT_LABELS;
 
   return [
     {
-      label: "Owed to challengers",
+      label: labels.owedToChallengers,
       amount: owed,
       formattedAmount: `${formatUsdc(owed)} USDC`,
       percent: formatPercentage(owed, gross),
     },
     {
-      label: "Total fees",
+      label: labels.totalFees,
       amount: fees,
       formattedAmount: `${formatUsdc(fees)} USDC`,
       percent: formatPercentage(fees, gross),
     },
     {
-      label: "Dust",
+      label: labels.dust,
       amount: dust,
       formattedAmount: `${formatUsdc(dust)} USDC`,
       percent: formatPercentage(dust, gross),
