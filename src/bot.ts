@@ -21,6 +21,8 @@ import {
   splitTelegramMessage,
   type ExplorerKeyboard,
 } from "./notifications/format.js";
+import { formatFeatureFlags } from "./notifications/featureFlags.js";
+import { DEFAULT_SILENT_EVENTS, isSilent } from "./notifications/priority.js";
 export { previewMessage } from "./notifications/format.js";
 import { type BotConfig } from "./config.js";
 import type { ContractSource } from "./stellar/decode.js";
@@ -286,6 +288,8 @@ export interface SendExtra {
    * absent, so the send is byte-identical to the unthreaded one.
    */
   replyToMessageId?: number | undefined;
+  /** Decoded contract event name used to apply silent-notification policy. */
+  eventName?: string | undefined;
 }
 
 /**
@@ -351,7 +355,7 @@ export const notifierSkips = { emptyText: 0 };
 export function createNotifier(
   bot: Pick<Bot, "api">,
   config: Pick<BotConfig, "chatId" | "marketChatId" | "squadChatId" | "botToken"> &
-    Partial<Pick<BotConfig, "chatIds" | "linkPreviewMarket" | "linkPreviewSquad">>,
+    Partial<Pick<BotConfig, "chatIds" | "linkPreviewMarket" | "linkPreviewSquad" | "silentEvents">>,
 ) {
   return async (
     text: string | null,
@@ -385,9 +389,13 @@ export function createNotifier(
         ? !config.linkPreviewSquad
         : true;
 
+    const silentOption = extra?.eventName && isSilent(extra.eventName, config.silentEvents ?? DEFAULT_SILENT_EVENTS)
+      ? { disable_notification: true }
+      : {};
     const notificationOptions = {
       parse_mode: "MarkdownV2" as const,
       link_preview_options: { is_disabled: linkPreviewDisabled },
+      ...silentOption,
     };
 
     // Oversized payloads go out as ordered chunks under Telegram's limit. The
@@ -438,6 +446,7 @@ export function createNotifier(
       // Plain text (no parse mode), same per-source link preview setting.
       await bot.api.sendMessage(chatId, fallback, {
         link_preview_options: notificationOptions.link_preview_options,
+        ...silentOption,
         ...(extra?.reply_markup ? { reply_markup: extra.reply_markup } : {}),
         ...(extra?.replyToMessageId !== undefined
           ? { reply_parameters: { chat_id: chatId, message_id: extra.replyToMessageId } }
