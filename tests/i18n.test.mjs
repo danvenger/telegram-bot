@@ -17,6 +17,7 @@ import test from "node:test";
 import {
   AUDIT_CLI_HINT,
   COMMAND_DESCRIPTIONS,
+  ES_MESSAGES,
   EXPLORER_BUTTON_TEXT,
   HELP_INTRO,
   HELP_TITLE,
@@ -35,6 +36,7 @@ import {
 } from "../dist/notifications/format.js";
 
 import {
+  helpMessage,
   pauseMessage,
   resumeMessage,
   registerCommandHandlers,
@@ -748,6 +750,51 @@ test("/pause stopped reply matches PAUSE_MESSAGES.stopped", async () => {
   };
   await handlers.get("pause")(ctx);
   assert.equal(replies[0][0], PAUSE_MESSAGES.stopped);
+});
+
+// ── Locale selection: config.locale drives every i18n lookup ────────────────
+
+test("pauseMessage and resumeMessage render the selected locale", () => {
+  assert.equal(pauseMessage("paused", "es"), ES_MESSAGES.pauseMessages.paused);
+  assert.equal(pauseMessage("already-paused", "es"), ES_MESSAGES.pauseMessages.alreadyPaused);
+  assert.equal(resumeMessage("resumed", "es"), ES_MESSAGES.resumeMessages.resumed);
+  assert.equal(pauseMessage("paused", "en"), PAUSE_MESSAGES.paused);
+  assert.equal(pauseMessage("paused"), PAUSE_MESSAGES.paused);
+});
+
+test("helpMessage uses the configured locale for title and commands", () => {
+  const text = helpMessage({ ...baseConfig(), locale: "es" });
+  assert.ok(text.startsWith(ES_MESSAGES.helpTitle));
+  assert.ok(text.includes(ES_MESSAGES.commandDescriptions.pause));
+  assert.equal(text.includes(COMMAND_DESCRIPTIONS.pause), false);
+});
+
+test("formatEvent renders the Spanish MarkdownV2 template when locale is es", () => {
+  const config = testnetConfig({ locale: "es" });
+  const event = marketEvent({ name: "claim_created", claimId: 7, category: "crypto", creator: "GABCD" });
+  const result = formatEvent(config, event);
+  assert.ok(result.startsWith("🆕 *Nueva reclamación* \\#7"));
+  assert.equal(result.includes("New claim"), false);
+});
+
+test("formatPlainTextEvent renders Spanish when locale is es", () => {
+  const config = testnetConfig({ locale: "es" });
+  const event = marketEvent({ name: "claim_cancelled", claimId: 3 });
+  assert.equal(formatPlainTextEvent(config, event), "Reclamación #3 cancelada — apuestas devueltas\nledger 42");
+});
+
+test("explorerKeyboard uses the localized button labels", () => {
+  const config = testnetConfig({
+    locale: "es",
+    mimirAppUrl: "https://app.example.test",
+  });
+  const event = marketEvent({}, {
+    txHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  });
+  const keyboard = explorerKeyboard(config, event);
+  assert.ok(keyboard !== undefined);
+  assert.equal(keyboard.inline_keyboard[0][0].text, ES_MESSAGES.explorerButtonText);
+  assert.equal(keyboard.inline_keyboard[0][1].text, ES_MESSAGES.mimirAppButtonText);
 });
 
 // ── Boundary: no reserved character in plain-text templates ──────────────────

@@ -51,6 +51,12 @@ import {
   parseNotificationFeatureFlags,
   type NotificationFeatureFlags,
 } from "./notifications/featureFlags.js";
+import {
+  DEFAULT_LOCALE,
+  normalizeLocale,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from "./i18n.js";
 
 /** Named Stellar networks the bot understands. `custom` is any other passphrase. */
 export type StellarNetwork = "testnet" | "mainnet" | "futurenet" | "custom";
@@ -161,6 +167,12 @@ export const APP_VERSION: string = (() => {
 export interface StellarConfig {
   /** Named network, derived from STELLAR_NETWORK or inferred from the passphrase. */
   network?: StellarNetwork;
+  /**
+   * Locale for every user-facing string (MIMIR_LOCALE). Optional on this
+   * chain-only type so hand-built configs keep working; `loadConfig` always
+   * sets it, and callers fall back to {@link DEFAULT_LOCALE} when absent.
+   */
+  locale?: Locale;
   marketContractId: string;
   squadContractId: string;
   marketContractVersion: string;
@@ -178,6 +190,8 @@ export interface TelegramRoute {
 }
 
 export interface BotConfig extends StellarConfig {
+  /** Locale for every user-facing string, from MIMIR_LOCALE. */
+  locale: Locale;
   /** Semver string from `package.json`, or `"unknown"` if unavailable. */
   version: string;
   botToken: string;
@@ -309,6 +323,7 @@ export class ConfigError extends Error {
 
 const DEFAULTS = {
   network: "testnet" as StellarNetwork,
+  locale: DEFAULT_LOCALE,
   rpcUrl: NETWORK_RPC_URLS.testnet,
   horizonUrl: NETWORK_HORIZON_URLS.testnet,
   networkPassphrase: NETWORK_PASSPHRASES.testnet,
@@ -807,8 +822,17 @@ export function loadConfig(): BotConfig {
   for (const problem of featureFlagsParsed.problems) c.problems.push(problem);
   const chatIds = c.chatIds("TELEGRAM_CHAT_ID");
 
+  const localeInput = read("MIMIR_LOCALE");
+  const locale = localeInput === undefined ? DEFAULT_LOCALE : normalizeLocale(localeInput);
+  if (locale === null) {
+    c.problems.push(
+      `MIMIR_LOCALE must be one of ${SUPPORTED_LOCALES.join(", ")}; got "${localeInput}"`,
+    );
+  }
+
   const config: BotConfig = {
     ...stellar,
+    locale: locale ?? DEFAULT_LOCALE,
     version: APP_VERSION,
     botToken: c.botToken("BOT_TOKEN"),
     chatId: chatIds[0] ?? "",
@@ -983,6 +1007,7 @@ interface ConfigKeySpec {
  */
 const CONFIG_KEYS: readonly ConfigKeySpec[] = [
   { key: "MIMIR_PROFILE", secret: false },
+  { key: "MIMIR_LOCALE", secret: false, hasBuiltInDefault: true },
   { key: "MARKET_CONTRACT_ID", secret: false },
   { key: "SQUAD_CONTRACT_ID", secret: false },
   { key: "STELLAR_RPC_URL", secret: false, hasBuiltInDefault: true },

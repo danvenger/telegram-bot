@@ -35,12 +35,10 @@ import {
   type AuditLog,
 } from "./audit.js";
 import {
-  AUDIT_CLI_HINT,
   COMMAND_DESCRIPTIONS,
-  HELP_INTRO,
-  HELP_TITLE,
-  PAUSE_MESSAGES,
-  RESUME_MESSAGES,
+  messagesFor,
+  type CommandName,
+  type Locale,
 } from "./i18n.js";
 import { helpDetailMessage } from "./commands/help-detail.js";
 import { aboutMessage } from "./commands/about.js";
@@ -155,16 +153,22 @@ export const COMMANDS = [
 ] as const;
 
 function visibleCommands(config?: BotConfig) {
-  return COMMANDS.filter((command) =>
-    !command.operatorOnly || config === undefined || config.operatorTelegramUserId !== null,
-  );
+  const descriptions = messagesFor(config?.locale).commandDescriptions;
+  return COMMANDS.filter(
+    (command) =>
+      !command.operatorOnly || config === undefined || config.operatorTelegramUserId !== null,
+  ).map((command) => ({
+    ...command,
+    description: descriptions[command.command as CommandName],
+  }));
 }
 
 export function helpMessage(config?: BotConfig): string {
+  const messages = messagesFor(config?.locale);
   return [
-    HELP_TITLE,
+    messages.helpTitle,
     "",
-    escapeMd(HELP_INTRO),
+    escapeMd(messages.helpIntro),
     "",
     ...visibleCommands(config).map(({ command, description }) =>
       escapeMd(`/${command} — ${description}`),
@@ -349,10 +353,14 @@ function ago(timestamp: number | null, nowMs: number = Date.now()): string {
  * here goes through MarkdownV2 escaping; this message is sent without a parse
  * mode. Bounded twice over: the file read is capped and only the tail renders.
  */
-function renderAuditForTelegram(summary: AuditFileSummary, tail: number): string {
+function renderAuditForTelegram(
+  summary: AuditFileSummary,
+  tail: number,
+  locale?: Locale,
+): string {
   const header = `*Audit* — ${summary.file}`;
   const report = renderAuditReport(summary, { tail });
-  return `${header}\n\n${report}\n\n${AUDIT_CLI_HINT}`;
+  return `${header}\n\n${report}\n\n${messagesFor(locale).auditCliHint}`;
 }
 
 function cursorPreview(cursor: string | null): string {
@@ -598,25 +606,27 @@ export function contractsMessage(config: BotConfig): string {
 }
 
 /** Exact operator replies, exported for deterministic Telegram payload tests. */
-export function pauseMessage(result: PollerPauseResult): string {
+export function pauseMessage(result: PollerPauseResult, locale?: Locale): string {
+  const messages = messagesFor(locale).pauseMessages;
   switch (result) {
     case "paused":
-      return PAUSE_MESSAGES.paused;
+      return messages.paused;
     case "already-paused":
-      return PAUSE_MESSAGES.alreadyPaused;
+      return messages.alreadyPaused;
     case "stopped":
-      return PAUSE_MESSAGES.stopped;
+      return messages.stopped;
   }
 }
 
-export function resumeMessage(result: PollerResumeResult): string {
+export function resumeMessage(result: PollerResumeResult, locale?: Locale): string {
+  const messages = messagesFor(locale).resumeMessages;
   switch (result) {
     case "resumed":
-      return RESUME_MESSAGES.resumed;
+      return messages.resumed;
     case "already-running":
-      return RESUME_MESSAGES.alreadyRunning;
+      return messages.alreadyRunning;
     case "stopped":
-      return RESUME_MESSAGES.stopped;
+      return messages.stopped;
   }
 }
 
@@ -769,7 +779,7 @@ export function registerCommandHandlers(
           ...summary,
           entries: [...summary.entries, ...live].slice(-AUDIT_REPORT_MAX_ENTRIES),
         };
-        await ctx.reply(renderAuditForTelegram(merged, AUDIT_TAIL), {
+        await ctx.reply(renderAuditForTelegram(merged, AUDIT_TAIL, config.locale), {
           link_preview_options: { is_disabled: true },
         });
       } catch (err) {
@@ -802,7 +812,7 @@ export function registerCommandHandlers(
         console.warn(`[bot] ignored unauthorized /pause on update ${ctx.update.update_id}`);
         return;
       }
-      await ctx.reply(pauseMessage(pause()), TELEGRAM_OPTIONS);
+      await ctx.reply(pauseMessage(pause(), config.locale), TELEGRAM_OPTIONS);
     },
 
     resume: async (ctx) => {
@@ -810,7 +820,7 @@ export function registerCommandHandlers(
         console.warn(`[bot] ignored unauthorized /resume on update ${ctx.update.update_id}`);
         return;
       }
-      await ctx.reply(resumeMessage(resume()), TELEGRAM_OPTIONS);
+      await ctx.reply(resumeMessage(resume(), config.locale), TELEGRAM_OPTIONS);
     },
   };
 
@@ -958,7 +968,7 @@ export async function handleCallbackQuery(
 
       case "pause": {
         const result = pause();
-        const text = pauseMessage(result);
+        const text = pauseMessage(result, config.locale);
         if (ctx.callbackQuery?.message) {
           await updateOrReplyMessage(ctx, text, operatorKeyboard());
         } else {
@@ -972,7 +982,7 @@ export async function handleCallbackQuery(
 
       case "resume": {
         const result = resume();
-        const text = resumeMessage(result);
+        const text = resumeMessage(result, config.locale);
         if (ctx.callbackQuery?.message) {
           await updateOrReplyMessage(ctx, text, operatorKeyboard());
         } else {
