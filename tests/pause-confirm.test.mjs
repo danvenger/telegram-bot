@@ -13,9 +13,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  handleCallbackQuery,
+  handlePauseConfirmCallback,
   validateCallbackData,
-  operatorKeyboard,
+  validatePauseConfirmData,
+  pauseConfirmKeyboard,
   CALLBACK_PAUSE_CONFIRM,
   CALLBACK_PAUSE_CANCEL,
   PAUSE_CONFIRM_TTL_MS,
@@ -82,31 +83,39 @@ function nowSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
-// ── validateCallbackData ──────────────────────────────────────────────────────
+// ── validatePauseConfirmData ─────────────────────────────────────────────────
 
-test("validateCallbackData accepts pause-confirm", () => {
-  assert.equal(validateCallbackData(CALLBACK_PAUSE_CONFIRM), CALLBACK_PAUSE_CONFIRM);
+test("validatePauseConfirmData accepts pause-confirm", () => {
+  assert.equal(validatePauseConfirmData(CALLBACK_PAUSE_CONFIRM), CALLBACK_PAUSE_CONFIRM);
 });
 
-test("validateCallbackData accepts pause-cancel", () => {
-  assert.equal(validateCallbackData(CALLBACK_PAUSE_CANCEL), CALLBACK_PAUSE_CANCEL);
+test("validatePauseConfirmData accepts pause-cancel", () => {
+  assert.equal(validatePauseConfirmData(CALLBACK_PAUSE_CANCEL), CALLBACK_PAUSE_CANCEL);
 });
 
-test("validateCallbackData rejects unknown data", () => {
-  assert.equal(validateCallbackData("bad-action"), null);
+test("validatePauseConfirmData rejects unknown data", () => {
+  assert.equal(validatePauseConfirmData("bad-action"), null);
 });
 
-test("validateCallbackData rejects undefined", () => {
-  assert.equal(validateCallbackData(undefined), null);
+test("validatePauseConfirmData rejects undefined", () => {
+  assert.equal(validatePauseConfirmData(undefined), null);
 });
 
-test("validateCallbackData rejects empty string", () => {
-  assert.equal(validateCallbackData(""), null);
+test("validatePauseConfirmData rejects empty string", () => {
+  assert.equal(validatePauseConfirmData(""), null);
 });
 
-// ── operatorKeyboard ──────────────────────────────────────────────────────────
+// The pause-confirm payloads are deliberately outside the navigation-action set:
+// the generic dispatcher must not act on them, and the confirmation flow must
+// not act on navigation actions.
+test("validateCallbackData keeps pause-confirm payloads out of the action set", () => {
+  assert.equal(validateCallbackData(CALLBACK_PAUSE_CONFIRM).ok, false);
+  assert.equal(validateCallbackData(CALLBACK_PAUSE_CANCEL).ok, false);
+});
 
-test("operatorKeyboard button callback_data strings are within Telegram's 64-byte limit", () => {
+// ── pauseConfirmKeyboard ─────────────────────────────────────────────────────
+
+test("pauseConfirmKeyboard button callback_data strings are within Telegram's 64-byte limit", () => {
   assert.ok(
     Buffer.byteLength(CALLBACK_PAUSE_CONFIRM, "utf8") <= 64,
     `pause-confirm exceeds 64 bytes`,
@@ -117,8 +126,8 @@ test("operatorKeyboard button callback_data strings are within Telegram's 64-byt
   );
 });
 
-test("operatorKeyboard returns an object with inline_keyboard rows", () => {
-  const kb = operatorKeyboard();
+test("pauseConfirmKeyboard returns an object with inline_keyboard rows", () => {
+  const kb = pauseConfirmKeyboard();
   // grammy InlineKeyboard serialises to { inline_keyboard: Button[][] }
   const serialised = kb.inline_keyboard;
   assert.ok(Array.isArray(serialised), "inline_keyboard is an array");
@@ -128,7 +137,7 @@ test("operatorKeyboard returns an object with inline_keyboard rows", () => {
   assert.ok(callbackDatas.includes(CALLBACK_PAUSE_CANCEL));
 });
 
-// ── handleCallbackQuery — confirm ────────────────────────────────────────────
+// ── handlePauseConfirmCallback — confirm ─────────────────────────────────────
 
 test("operator confirm: calls pause(), answers query, edits message with pauseMessage result", async () => {
   let pauseCalls = 0;
@@ -147,7 +156,7 @@ test("operator confirm: calls pause(), answers query, edits message with pauseMe
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 500); // 0.5 s after send
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 500); // 0.5 s after send
 
   assert.equal(pauseCalls, 1);
   // answerCallbackQuery was called (no show_alert)
@@ -171,13 +180,13 @@ test("operator confirm already-paused: edits message with already-paused text", 
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 100);
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 100);
 
   assert.equal(edits.length, 1);
   assert.match(edits[0].text, /already paused/i);
 });
 
-// ── handleCallbackQuery — cancel ─────────────────────────────────────────────
+// ── handlePauseConfirmCallback — cancel ──────────────────────────────────────
 
 test("operator cancel: does NOT call pause(), answers with text, edits message", async () => {
   let pauseCalls = 0;
@@ -196,7 +205,7 @@ test("operator cancel: does NOT call pause(), answers with text, edits message",
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 500);
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 500);
 
   assert.equal(pauseCalls, 0);
   assert.equal(answered.length, 1);
@@ -205,7 +214,7 @@ test("operator cancel: does NOT call pause(), answers with text, edits message",
   assert.match(edits[0].text, /Pause cancelled/);
 });
 
-// ── handleCallbackQuery — expired ────────────────────────────────────────────
+// ── handlePauseConfirmCallback — expired ─────────────────────────────────────
 
 test("expired confirmation: answers with alert, edits expiry message, does NOT call pause()", async () => {
   let pauseCalls = 0;
@@ -225,7 +234,7 @@ test("expired confirmation: answers with alert, edits expiry message, does NOT c
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, nowMs);
+  await handlePauseConfirmCallback(ctx, deps, nowMs);
 
   assert.equal(pauseCalls, 0);
   assert.equal(answered.length, 1);
@@ -254,12 +263,12 @@ test("confirmation exactly at TTL boundary is still valid", async () => {
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, nowMs);
+  await handlePauseConfirmCallback(ctx, deps, nowMs);
 
   assert.equal(pauseCalls, 1);
 });
 
-// ── handleCallbackQuery — non-operator ───────────────────────────────────────
+// ── handlePauseConfirmCallback — non-operator ────────────────────────────────
 
 test("non-operator confirm: answers with alert, does NOT call pause() or edit message", async () => {
   let pauseCalls = 0;
@@ -278,7 +287,7 @@ test("non-operator confirm: answers with alert, does NOT call pause() or edit me
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 500);
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 500);
 
   assert.equal(pauseCalls, 0);
   assert.equal(answered.length, 1);
@@ -300,7 +309,7 @@ test("non-operator cancel: answers with alert, does NOT edit message", async () 
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 500);
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 500);
 
   assert.equal(answered.length, 1);
   assert.equal(answered[0].show_alert, true);
@@ -324,7 +333,7 @@ test("no operator configured: non-operator confirm is rejected", async () => {
     messageDate,
   });
 
-  await handleCallbackQuery(ctx, deps, messageDate * 1000 + 500);
+  await handlePauseConfirmCallback(ctx, deps, messageDate * 1000 + 500);
 
   assert.equal(pauseCalls, 0);
   assert.equal(answered.length, 1);

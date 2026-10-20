@@ -30,6 +30,7 @@ import { confidenceIndicator } from "./confidence.js";
 import { settlementLines } from "./settlement.js";
 import type { StellarConfig } from "../config.js";
 import { messagesFor, type Messages } from "../i18n.js";
+import { formatDeadline } from "./time.js";
 
 /** Telegram's MarkdownV2 reserved set. All of it must be escaped, everywhere. */
 const MDV2_RESERVED = /[_*[\]()~`>#+\-=|{}.!\\]/g;
@@ -370,8 +371,11 @@ export function formatDigest(
  * in contract state, not the event, so it is not invented here. The squad
  * contract's `market_created` does carry `question`, and that is shown.
  */
-function headline(messages: Messages, event: DecodedEvent): string | null {
-function headline(event: DecodedEvent, nowMs?: number): string | null {
+function headline(
+  messages: Messages,
+  event: DecodedEvent,
+  nowMs?: number,
+): string | null {
   const p = event.payload;
   const md = messages.notificationMd;
 
@@ -525,8 +529,7 @@ export function formatEvent(
   const currentMs = nowMs ?? config.nowMs ?? (event?.at && event.at > 0 ? event.at * 1000 : Date.now());
   try {
     const messages = messagesFor(config.locale);
-    const head = headline(messages, event);
-    const head = headline(event, currentMs);
+    const head = headline(messages, event, currentMs);
     if (head === null) return null;
     const body = `${head}\n${footer(config, event)}`;
     if (config.channelPreviewMode) {
@@ -564,8 +567,11 @@ function plainFooter(config: StellarConfig, event: DecodedEvent): string {
  * field-for-field (same identities, amounts, bounded clips) but emits no
  * MarkdownV2 syntax at all, so Telegram cannot reject it for entity parsing.
  */
-function plainHeadline(messages: Messages, event: DecodedEvent): string | null {
-function plainHeadline(event: DecodedEvent, nowMs?: number): string | null {
+function plainHeadline(
+  messages: Messages,
+  event: DecodedEvent,
+  nowMs?: number,
+): string | null {
   const p = event.payload;
   const plain = messages.notificationPlain;
 
@@ -709,11 +715,9 @@ export function formatPlainTextEvent(
   nowMs?: number,
 ): string | null {
   const messages = messagesFor(config.locale);
-  try {
-    const head = plainHeadline(messages, event);
   const currentMs = nowMs ?? config.nowMs ?? (event?.at && event.at > 0 ? event.at * 1000 : Date.now());
   try {
-    const head = plainHeadline(event, currentMs);
+    const head = plainHeadline(messages, event, currentMs);
     if (head === null) return null;
     const body = `${head}\n${plainFooter(config, event)}`.trim();
     if (!body) return minimalPlainTextEvent(messages, event);
