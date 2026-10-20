@@ -1,6 +1,8 @@
+
 import { networkLabel, type BotConfig } from "../config.js";
 import { escapeMd } from "../notifications/format.js";
-
+import { escapeMd } from "../notifications/format.js";
+import { networkLabel, type BotConfig } from "../config.js";
 const REPOSITORY_URL = "https://github.com/example/stellar-bot";
 
 export function aboutMessage(config: BotConfig, version: string): string {

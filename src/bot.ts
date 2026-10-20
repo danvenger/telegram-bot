@@ -7,7 +7,7 @@
  * state. All chain logic lives in `src/poller.ts` and `src/stellar/`.
  */
 
-import { Bot, InlineKeyboard, type Context, type CommandContext } from "grammy";
+import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { performance } from "node:perf_hooks";
 
@@ -53,84 +53,34 @@ export {
 } from "./commands/broadcast.js";
 
 /**
- * Telegram bot tokens have the shape `<digits>:<35+ url-safe chars>`.
- * Values pasted from dashboards frequently arrive wrapped in quotes or with
- * trailing whitespace/newlines, which only surface as a `getMe` failure at
- * startup. Validate the shape up front and name the problem without ever
- * echoing the token (or any part of it) into a message or log.
+ * How long a pause-confirmation message stays valid.
+ * Callbacks arriving after this window are rejected as stale.
  */
-export type BotTokenShapeProblem =
-  | "empty"
-  | "surrounding-quotes"
-  | "whitespace"
-  | "missing-colon"
-  | "bad-prefix"
-  | "bad-suffix"
-  | "wrong-shape";
-
-export interface BotTokenShapeResult {
-  ok: boolean;
-  problem?: BotTokenShapeProblem;
-  message?: string;
-}
-
-const BOT_TOKEN_SHAPE = /^\d+:[A-Za-z0-9_-]{35,}$/;
+export const PAUSE_CONFIRM_TTL_MS = 60_000;
 
 /**
- * Validate a `BOT_TOKEN` value without ever including the token (or any
- * substring of it) in the returned message. The messages are intentionally
- * generic so they are safe to log and to surface in a startup error.
+ * The two callback_data strings used by the pause confirmation flow.
+ * Both are well under Telegram's 64-byte limit.
  */
-export function validateBotTokenShape(raw: unknown): BotTokenShapeResult {
-  if (typeof raw !== "string" || raw.length === 0) {
-    return {
-      ok: false,
-      problem: "empty",
-      message: "BOT_TOKEN is empty; expected <digits>:<35+ url-safe chars>.",
-    };
-  }
+export const CALLBACK_PAUSE_CONFIRM = "pause-confirm" as const;
+export const CALLBACK_PAUSE_CANCEL = "pause-cancel" as const;
 
-  // Surrounding quotes are the most common paste artefact.
-  if (
-    (raw.startsWith('"') && raw.endsWith('"')) ||
-    (raw.startsWith("'") && raw.endsWith("'"))
-  ) {
-    return {
-      ok: false,
-      problem: "surrounding-quotes",
-      message:
-        "BOT_TOKEN is wrapped in quotes; remove the surrounding quotes and retry.",
-    };
-  }
+type ValidCallbackAction = typeof CALLBACK_PAUSE_CONFIRM | typeof CALLBACK_PAUSE_CANCEL;
 
-  // Any whitespace anywhere (leading, trailing, or embedded) is rejected.
-  if (/\s/.test(raw)) {
-    return {
-      ok: false,
-      problem: "whitespace",
-      message:
-        "BOT_TOKEN contains whitespace (leading, trailing, or embedded); trim it and retry.",
-    };
-  }
+const VALID_CALLBACK_DATA = new Set<string>([
+  CALLBACK_PAUSE_CONFIRM,
+  CALLBACK_PAUSE_CANCEL,
+]);
 
-  if (!raw.includes(":")) {
-    return {
-      ok: false,
-      problem: "missing-colon",
-      message: "BOT_TOKEN is missing the ':' separator; expected <digits>:<35+ url-safe chars>.",
-    };
+/**
+ * Returns the validated action string or `null` if data is unknown/missing.
+ * Keeps the handler from acting on arbitrary payloads from third parties.
+ */
+export function validateCallbackData(data: string | undefined): ValidCallbackAction | null {
+  if (data !== undefined && VALID_CALLBACK_DATA.has(data)) {
+    return data as ValidCallbackAction;
   }
-
-  if (!BOT_TOKEN_SHAPE.test(raw)) {
-    return {
-      ok: false,
-      problem: "wrong-shape",
-      message:
-        "BOT_TOKEN has the wrong shape; expected <digits>:<35+ url-safe chars>.",
-    };
-  }
-
-  return { ok: true };
+  return null;
 }
 
 /** Command name and whether it is operator-only, in help/registration order. */
@@ -168,6 +118,27 @@ function visibleCommands(config?: BotConfig) {
 
 export function helpMessage(config?: BotConfig): string {
   const { HELP_TITLE, HELP_INTRO } = messages();
+/** Inline keyboard attached to the pause confirmation message. */
+export function operatorKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Confirm pause", CALLBACK_PAUSE_CONFIRM)
+    .text("❌ Cancel", CALLBACK_PAUSE_CANCEL);
+}
+
+const HELP_BASE = [
+  "*Mimir notifier*",
+  "",
+  "I watch Mimir's two Soroban contracts on Stellar and post every new on-chain event here: claims opened, challenges staked, oracle resolutions, settlements and payouts\\.",
+  "",
+  "/status — what I am watching and how far I have read",
+  "/contracts — the contract ids I watch and where to look them up",
+  "/health — health assessment and operational readiness",
+  "/preview — preview channel notification formatting",
+  "/help — this message",
+];
+
+function helpMessage(config: BotConfig): string {
+  if (config.operatorTelegramUserId === null) return HELP_BASE.join("\n")
   return [
     HELP_TITLE,
     "",
@@ -629,6 +600,56 @@ export function resumeMessage(result: PollerResumeResult): string {
   }
 }
 
+/**
+ * Shared handler for pause inline-keyboard callbacks.
+ *
+ * Exported for unit testing without needing a live grammy `Bot` instance.
+ * Callers must pass a grammy-compatible `ctx` that exposes:
+ *   - `ctx.from`
+ *   - `ctx.callbackQuery.data`
+ *   - `ctx.callbackQuery.message.date` (Unix seconds, set by Telegram)
+ *   - `ctx.answerCallbackQuery(text?, opts?)`
+ *   - `ctx.editMessageText(text, opts)`
+ */
+export async function handleCallbackQuery(
+  ctx: Context,
+  deps: Pick<BotDeps, "config" | "pause">,
+  nowMs: number = Date.now(),
+): Promise<void> {
+  const { config, pause } = deps;
+
+  const action = validateCallbackData(ctx.callbackQuery?.data);
+  if (action === null) return; // unknown payload — silently ignore
+
+  // Only the operator may act on these buttons.
+  if (!isOperator(ctx, config)) {
+    await ctx.answerCallbackQuery({ text: "Only the operator can do that.", show_alert: true });
+    return;
+  }
+
+  // Reject stale confirmations so an old message cannot pause the bot later.
+  const messageDate = ctx.callbackQuery?.message?.date ?? 0;
+  const ageMs = nowMs - messageDate * 1000;
+  if (ageMs > PAUSE_CONFIRM_TTL_MS) {
+    await ctx.answerCallbackQuery({ text: "Confirmation expired.", show_alert: true });
+    await ctx.editMessageText("⏱ *Pause confirmation expired\\.* Run /pause again\\.", TELEGRAM_OPTIONS);
+    return;
+  }
+
+  if (action === CALLBACK_PAUSE_CONFIRM) {
+    const result = pause();
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(pauseMessage(result), TELEGRAM_OPTIONS);
+    return;
+  }
+
+  if (action === CALLBACK_PAUSE_CANCEL) {
+    await ctx.answerCallbackQuery({ text: "Cancelled." });
+    await ctx.editMessageText("*Pause cancelled\\.* Polling continues\\.", TELEGRAM_OPTIONS);
+    return;
+  }
+}
+
 export interface BotDeps {
   config: BotConfig;
   status: () => PollerStatus;
@@ -919,7 +940,11 @@ export async function handleCallbackQuery(
       });
       return;
     }
-  }
+    await ctx.reply(
+      "⏸ *Pause polling?*\nThis will stop new scans from starting\\. The current scan may finish\\.",
+      { ...TELEGRAM_OPTIONS, reply_markup: operatorKeyboard() },
+    );
+  });
 
   // Execute validated action
   try {
@@ -993,28 +1018,21 @@ export async function handleCallbackQuery(
         break;
       }
     }
-  } catch (err) {
-    console.error(
-      `[bot] callback error on action ${action.type}: ${safeErrorMessage(err, [config.botToken])}`,
-    );
-    await safeAnswerCallback(ctx, config, { text: "Action failed" });
-  }
-}
+    await ctx.reply(resumeMessage(resume()), TELEGRAM_OPTIONS);
+  });
 
-/** Register callback handlers on a grammy-compatible bot or mock. */
-export function registerCallbackHandlers(
-  bot: Bot | { on: (event: string, handler: (ctx: Context) => Promise<void>) => void },
-  deps: BotDeps,
-): void {
-  (bot as { on: (event: string, handler: (ctx: Context) => Promise<void>) => void }).on(
-    "callback_query",
-    async (ctx: Context) => {
-      await handleCallbackQuery(ctx, deps);
-    },
+  // Inline-keyboard callbacks for the pause confirmation flow.
+  bot.callbackQuery(
+    [CALLBACK_PAUSE_CONFIRM, CALLBACK_PAUSE_CANCEL],
+    async (ctx) => handleCallbackQuery(ctx, { config, pause }),
   );
 }
 
 export function createBot(deps: BotDeps): Bot {
+  const clientOptions =
+    deps.config.telegramApiRoot !== undefined && deps.config.telegramApiRoot !== null
+      ? { client: { apiRoot: deps.config.telegramApiRoot } }
+      : undefined;
   const tokenCheck = validateBotTokenShape(deps.config.botToken);
   if (!tokenCheck.ok) {
     // Never include the token (or any part of it) in the thrown error.
@@ -1024,7 +1042,9 @@ export function createBot(deps: BotDeps): Bot {
   }
   const bot = new Bot(
     deps.config.botToken,
-    deps.botInfo !== undefined ? { botInfo: deps.botInfo } : undefined,
+    deps.botInfo !== undefined
+      ? { botInfo: deps.botInfo, ...clientOptions }
+      : clientOptions,
   );
   registerCommandHandlers(bot, deps);
   registerCallbackHandlers(bot, deps);
@@ -1251,6 +1271,3 @@ export async function registerCommands(bot: Bot, config?: BotConfig): Promise<vo
     console.warn(`[bot] setMyCommands failed: ${safeErrorMessage(err)}`);
   }
 }
-
-
-
