@@ -156,8 +156,12 @@ export const NOTIFICATION_MD = {
     captain: string,
     feeBps: string,
     deadline: string,
+    category?: string | null,
   ): string =>
-    `🆕 *New squad market* \\#${marketId}\n${question}\nCaptain: ${captain} · fee ${feeBps} bps · deadline ${deadline}`,
+    (
+      `🆕 *New squad market* \\#${marketId}\n${question}\nCaptain: ${captain} · fee ${feeBps} bps · deadline ${deadline}` +
+      (category ? `\nCategory: ${category}` : "")
+    ),
 
   deposited: (marketId: string, amount: string, side: string, participant: string): string =>
     `➕ *Squad \\#${marketId}* — ${amount} on *${side}*\nParticipant: ${participant}`,
@@ -274,8 +278,12 @@ export const NOTIFICATION_PLAIN = {
     captain: string,
     feeBps: string,
     deadline: string,
+    category?: string | null,
   ): string =>
-    `New squad market #${marketId}\n${question}\nCaptain: ${captain} · fee ${feeBps} bps · deadline ${deadline}`,
+    (
+      `New squad market #${marketId}\n${question}\nCaptain: ${captain} · fee ${feeBps} bps · deadline ${deadline}` +
+      (category ? `\nCategory: ${category}` : "")
+    ),
 
   deposited: (
     marketId: string | number,
