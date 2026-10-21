@@ -444,6 +444,7 @@ function headline(
         who(p.captain),
         escapeMd(String(p.feeBps)),
         escapeMd(formatDeadline(p.deadline, nowMs)),
+        p.category ? escapeMd(clip(p.category)) : null,
       );
 
     case "deposited":
@@ -636,6 +637,7 @@ function plainHeadline(
         plainWho(p.captain),
         String(p.feeBps),
         formatDeadline(p.deadline, nowMs),
+        p.category ? clip(p.category) : null,
       );
 
     case "deposited":

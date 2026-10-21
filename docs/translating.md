@@ -42,6 +42,7 @@ All user-facing localization templates live in [`src/i18n.ts`](../src/i18n.ts). 
 | `NOTIFICATION_MD` | **MarkdownV2** | Primary event notification templates (`claimCreated`, `claimChallenged`, etc.), fallback template (`fallbackEvent`), and preview headers (`previewModePrefix`, `channelPreviewMarket`, `channelPreviewSquad`). |
 | `NOTIFICATION_PLAIN` | **Plain text** | 1-to-1 plain-text mirror of `NOTIFICATION_MD` (plus `minimal`), sent without `parse_mode` if Telegram rejects the MarkdownV2 payload or when plain text is requested. |
 | `EXPLORER_BUTTON_TEXT` | **Plain text** | Label on the inline keyboard button linking to Stellar Expert (`"View on Explorer"`). Inline button labels do not parse Markdown. |
+| `MIMIR_APP_BUTTON_TEXT` | **Plain text** | Label on the inline keyboard button that opens the Mimir web app (`"Open in Mimir"`), present only when `MIMIR_APP_URL` is configured. |
 
 ### Why Both `NOTIFICATION_MD` and `NOTIFICATION_PLAIN` Exist
 
@@ -251,3 +252,5 @@ Before opening a pull request that edits or adds strings in [`src/i18n.ts`](../s
   npm test
   ```
   Specifically confirm that both [`tests/i18n.test.mjs`](../tests/i18n.test.mjs) (snapshot and plain-text boundary checks) and [`tests/markdown-lint.test.mjs`](../tests/markdown-lint.test.mjs) (MarkdownV2 tokenizer and reserved-character linter) pass with zero errors.
+
+---

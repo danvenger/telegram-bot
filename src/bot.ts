@@ -21,7 +21,6 @@ import {
   splitTelegramMessage,
   type ExplorerKeyboard,
 } from "./notifications/format.js";
-import { formatFeatureFlags } from "./notifications/featureFlags.js";
 import { DEFAULT_SILENT_EVENTS, isSilent } from "./notifications/priority.js";
 export { previewMessage } from "./notifications/format.js";
 import { type BotConfig } from "./config.js";

@@ -58,6 +58,11 @@ import path from "node:path";
 
 import type { rpc } from "@stellar/stellar-sdk";
 
+import {
+  ActivityBaseline,
+  type ActivityBaselineOptions,
+  type ActivityBaselineSnapshot,
+} from "./activity-baseline.js";
 import type { Metrics } from "./metrics.js";
 import type { SendExtra } from "./bot.js";
 import { appendAuditFile, auditEntry, createAuditLog, type AuditLog } from "./audit.js";
@@ -243,6 +248,12 @@ export interface PollerStatus {
   emptyPages: number;
   /** Cumulative pages walked across all successful target scans. */
   pagesScanned: number;
+  /**
+   * Rolling comparison of this cycle's event count against recent complete
+   * cycles. Updated only when every target was scanned, so a partial cycle is
+   * never mistaken for a quiet chain.
+   */
+  activityBaseline?: ActivityBaselineSnapshot;
   /** Empty pages in the most recent completed cycle (all targets). */
   lastCycleEmptyPages: number;
   /** Pages walked in the most recent completed cycle (all targets). */
@@ -460,6 +471,11 @@ export interface PollerDeps {
   targetBackoffOptions?: TargetBackoffOptions;
   /** Circuit breaker configuration */
   circuitBreakerOptions?: CircuitBreakerOptions;
+  /**
+   * Tuning for the rolling activity baseline. Defaults are production values;
+   * tests can shrink the window to observe a comparison quickly.
+   */
+  activityBaselineOptions?: ActivityBaselineOptions;
   /** Clock behind every timestamp this poller reports. Defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -1271,6 +1287,7 @@ export function createPoller(deps: PollerDeps) {
   };
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? defaultSleep;
+  const activityBaseline = new ActivityBaseline(deps.activityBaselineOptions);
   const targetInitialBackoff = deps.targetBackoffOptions?.initialBackoffMs ?? config.pollIntervalMs;
   const targetMaxBackoff = deps.targetBackoffOptions?.maxBackoffMs ?? DEFAULT_TARGET_MAX_BACKOFF_MS;
   const targetBackoffFactor = deps.targetBackoffOptions?.backoffFactor ?? DEFAULT_TARGET_BACKOFF_FACTOR;
@@ -1427,6 +1444,7 @@ export function createPoller(deps: PollerDeps) {
     },
     emptyPages: 0,
     pagesScanned: 0,
+    activityBaseline: activityBaseline.snapshot(),
     lastCycleEmptyPages: 0,
     lastCyclePages: 0,
     notificationsDropped: 0,
@@ -2402,6 +2420,11 @@ export function createPoller(deps: PollerDeps) {
     let cyclePages = 0;
     let cycleEmptyPages = 0;
     let cycleFailures = 0;
+    let cycleScans = 0;
+    // Events handed back by every successful scan in this cycle. Compared with
+    // the rolling baseline only when every target was scanned, so a target in
+    // backoff cannot make a normal cycle look quiet.
+    let cycleEvents = 0;
 
     // Drain parked sends before this cycle's events, so a recovered channel
     // catches up in order. Budgeted like the burst below: one recovery must
@@ -2472,6 +2495,8 @@ export function createPoller(deps: PollerDeps) {
           current.nextEligibleAt = null;
           anyOk = true;
 
+          cycleScans += 1;
+          cycleEvents += scan.events.length;
           cyclePages += scan.pages;
           cycleEmptyPages += scan.emptyPages;
           status.pagesScanned += scan.pages;
@@ -2683,6 +2708,28 @@ export function createPoller(deps: PollerDeps) {
         status.lastSuccessAt = now();
         status.consecutiveFailures = 0;
         metrics?.consecutiveFailures.set(0);
+
+        // Compare this cycle's activity with what recent complete cycles
+        // looked like. Incomplete cycles are skipped rather than recorded at a
+        // lower count: an RPC backoff is not a quiet chain.
+        if (cycleScans === targets.length) {
+          const comparison = activityBaseline.record(cycleEvents);
+          status.activityBaseline = activityBaseline.snapshot();
+          metrics?.lastCycleEvents.set(cycleEvents);
+          if (comparison.mean !== null) {
+            metrics?.activityBaselineEvents.set(Math.round(comparison.mean));
+          }
+          if (comparison.anomalous) {
+            metrics?.activityAnomalies.inc();
+            // Counts only: no event payloads, cursors, or RPC text. One line
+            // per anomalous cycle, which is exactly when an operator wants it.
+            console.warn(
+              `[poller] activity ${comparison.deviation}: ${cycleEvents} event(s) this cycle ` +
+                `vs baseline mean ${(comparison.mean ?? 0).toFixed(1)} ` +
+                `(z=${(comparison.zScore ?? 0).toFixed(2)}, ${comparison.samples} prior cycles)`,
+            );
+          }
+        }
       } else {
         status.consecutiveFailures += 1;
         metrics?.consecutiveFailures.set(status.consecutiveFailures);
