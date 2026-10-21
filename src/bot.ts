@@ -7,7 +7,7 @@
  * state. All chain logic lives in `src/poller.ts` and `src/stellar/`.
  */
 
-import { Bot, InlineKeyboard, type Context } from "grammy";
+import { Bot, InlineKeyboard, type Context, type CommandContext } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { performance } from "node:perf_hooks";
 
@@ -17,14 +17,12 @@ import {
   splitTelegramMessage,
   previewMessage,
   safeErrorMessage,
-  type ExplorerKeyboard,
 } from "./notifications/format.js";
 import { formatFeatureFlags } from "./notifications/featureFlags.js";
 import { DEFAULT_SILENT_EVENTS, isSilent } from "./notifications/priority.js";
 export { previewMessage } from "./notifications/format.js";
 import { formatProvenanceSummary, networkLabel, type BotConfig } from "./config.js";
 import { contractExplorerUrl } from "./stellar/client.js";
-import type { ContractSource } from "./stellar/decode.js";
 import { buildHealthReport, chainClockLabel } from "./health.js";
 import { renderLogExport, type LogCapture } from "./logger.js";
 import type { PollerPauseResult, PollerResumeResult, PollerStatus } from "./poller.js";
@@ -40,10 +38,42 @@ import { helpDetailMessage } from "./commands/help-detail.js";
 import { aboutMessage } from "./commands/about.js";
 export { helpDetailMessage, COMMAND_DETAILS, type CommandDetail } from "./commands/help-detail.js";
 import {
-  handleBroadcastCallback,
-  registerBroadcastHandlers,
-  type BroadcastStore,
-} from "./commands/broadcast.js";
+  AUDIT_CLI_HINT,
+  COMMAND_DESCRIPTIONS,
+  HELP_INTRO,
+  HELP_TITLE,
+  PAUSE_MESSAGES,
+  RESUME_MESSAGES,
+} from "./i18n.js";
+import {
+  canSendHint,
+  clearHintState,
+  closestCommand,
+  recordHint,
+  unknownCommandReply,
+} from "./commands/unknown.js";
+export { clearHintState } from "./commands/unknown.js";
+
+/** Shared metadata for handlers, help, and Telegram's command menu. */
+export const COMMANDS = [
+  { command: "start", description: COMMAND_DESCRIPTIONS.start, operatorOnly: false },
+  { command: "help", description: COMMAND_DESCRIPTIONS.help, operatorOnly: false },
+  { command: "about", description: COMMAND_DESCRIPTIONS.about, operatorOnly: false },
+  { command: "status", description: COMMAND_DESCRIPTIONS.status, operatorOnly: false },
+  { command: "audit", description: COMMAND_DESCRIPTIONS.audit, operatorOnly: true },
+  { command: "contracts", description: COMMAND_DESCRIPTIONS.contracts, operatorOnly: false },
+  { command: "health", description: COMMAND_DESCRIPTIONS.health, operatorOnly: false },
+  { command: "preview", description: COMMAND_DESCRIPTIONS.preview, operatorOnly: false },
+  { command: "ping", description: COMMAND_DESCRIPTIONS.ping, operatorOnly: false },
+  { command: "pause", description: COMMAND_DESCRIPTIONS.pause, operatorOnly: true },
+  { command: "resume", description: COMMAND_DESCRIPTIONS.resume, operatorOnly: true },
+] as const;
+
+function visibleCommands(config?: BotConfig) {
+  return COMMANDS.filter((command) =>
+    !command.operatorOnly || config === undefined || config.operatorTelegramUserId !== null,
+  );
+}
 export {
   handleBroadcastCallback,
   registerBroadcastHandlers,
@@ -53,36 +83,43 @@ export {
   sendBroadcast,
 } from "./commands/broadcast.js";
 
-/**
- * How long a pause-confirmation message stays valid.
- * Callbacks arriving after this window are rejected as stale.
- */
-export const PAUSE_CONFIRM_TTL_MS = 60_000;
+// ── Command registry ─────────────────────────────────────────────────────────
+
+/** grammy does not export a CommandContext type; alias Context for compatibility. */
+type CommandContext<C extends Context = Context> = C;
+
+/** All commands this bot registers, in display order. */
+export const COMMANDS = [
+  { command: "start" as const, description: COMMAND_DESCRIPTIONS.start },
+  { command: "help" as const, description: COMMAND_DESCRIPTIONS.help },
+  { command: "status" as const, description: COMMAND_DESCRIPTIONS.status },
+  { command: "audit" as const, description: COMMAND_DESCRIPTIONS.audit },
+  { command: "health" as const, description: COMMAND_DESCRIPTIONS.health },
+  { command: "contracts" as const, description: COMMAND_DESCRIPTIONS.contracts },
+  { command: "about" as const, description: "About this bot" },
+  { command: "preview" as const, description: COMMAND_DESCRIPTIONS.preview },
+  { command: "pause" as const, description: COMMAND_DESCRIPTIONS.pause },
+  { command: "resume" as const, description: COMMAND_DESCRIPTIONS.resume },
+];
 
 /**
- * The two callback_data strings used by the pause confirmation flow.
- * Both are well under Telegram's 64-byte limit.
+ * Returns the subset of commands that should be visible in the Telegram UI,
+ * depending on whether operator controls are configured.
  */
+function visibleCommands(config?: BotConfig): typeof COMMANDS {
+  if (!config || config.operatorTelegramUserId === null) {
+    return COMMANDS.filter((c) => c.command !== "pause" && c.command !== "resume" && c.command !== "audit");
+  }
+  return COMMANDS;
+}
+
+// ── Pause confirmation constants (re-exported for test compatibility) ─────────
+
+export const PAUSE_CONFIRM_TTL_MS = 60_000;
 export const CALLBACK_PAUSE_CONFIRM = "pause-confirm" as const;
 export const CALLBACK_PAUSE_CANCEL = "pause-cancel" as const;
 
-type ValidCallbackAction = typeof CALLBACK_PAUSE_CONFIRM | typeof CALLBACK_PAUSE_CANCEL;
-
-const VALID_CALLBACK_DATA = new Set<string>([
-  CALLBACK_PAUSE_CONFIRM,
-  CALLBACK_PAUSE_CANCEL,
-]);
-
-/**
- * Returns the validated action string or `null` if data is unknown/missing.
- * Keeps the handler from acting on arbitrary payloads from third parties.
- */
-export function validateCallbackData(data: string | undefined): ValidCallbackAction | null {
-  if (data !== undefined && VALID_CALLBACK_DATA.has(data)) {
-    return data as ValidCallbackAction;
-  }
-  return null;
-}
+type PauseCallbackAction = typeof CALLBACK_PAUSE_CONFIRM | typeof CALLBACK_PAUSE_CANCEL;
 
 /** Command name and whether it is operator-only, in help/registration order. */
 const COMMAND_SPECS = [
@@ -124,6 +161,8 @@ export function operatorKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("✅ Confirm pause", CALLBACK_PAUSE_CONFIRM)
     .text("❌ Cancel", CALLBACK_PAUSE_CANCEL);
+export function validatePauseCallbackData(data: unknown): PauseCallbackAction | null {
+  return data === CALLBACK_PAUSE_CONFIRM || data === CALLBACK_PAUSE_CANCEL ? data : null;
 }
 
 const HELP_BASE = [
@@ -140,6 +179,8 @@ const HELP_BASE = [
 
 function helpMessage(config: BotConfig): string {
   if (config.operatorTelegramUserId === null) return HELP_BASE.join("\n")
+export function helpMessage(config: BotConfig): string {
+  if (config.operatorTelegramUserId === null) return HELP_BASE.join("\n");
   return [
     HELP_TITLE,
     "",
@@ -312,7 +353,6 @@ export function operatorKeyboard(): InlineKeyboard {
     .row()
     .text("📊 Status", "status");
 }
-
 
 function ago(timestamp: number | null, nowMs: number = Date.now()): string {
   if (timestamp === null) return "never";
@@ -612,14 +652,14 @@ export function resumeMessage(result: PollerResumeResult): string {
  *   - `ctx.answerCallbackQuery(text?, opts?)`
  *   - `ctx.editMessageText(text, opts)`
  */
-export async function handleCallbackQuery(
+async function handlePauseCallback(
   ctx: Context,
   deps: Pick<BotDeps, "config" | "pause">,
   nowMs: number = Date.now(),
 ): Promise<void> {
   const { config, pause } = deps;
 
-  const action = validateCallbackData(ctx.callbackQuery?.data);
+  const action = validatePauseCallbackData(ctx.callbackQuery?.data);
   if (action === null) return; // unknown payload — silently ignore
 
   // Only the operator may act on these buttons.
@@ -683,7 +723,7 @@ export interface BotDeps {
  *   id (stored as a number in grammy's ctx.chat.id) and its string form are
  *   compared so that negative group ids such as -1001234567890 match correctly.
  */
-function isChatAllowed(allowedChatIds: readonly string[] | undefined, chatId: number): boolean {
+export function isChatAllowed(allowedChatIds: readonly string[] | undefined, chatId: number): boolean {
   // Hand-built configs (tests, embedders) may omit the list: treat it as open.
   if (!allowedChatIds || allowedChatIds.length === 0) return true;
   const asString = String(chatId);
@@ -716,13 +756,25 @@ async function replyMarkdown(
 
 /** Register command handlers on a grammy-compatible bot (also useful in tests). */
 export function registerCommandHandlers(
-  bot: Bot | { command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => void },
+  bot: Bot | { command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => void; callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => void },
   deps: BotDeps,
 ): void {
   const { config, status } = deps;
   const version = deps.version ?? "unknown";
   const pause = deps.pause ?? (() => "stopped");
   const resume = deps.resume ?? (() => "stopped");
+
+  const clock = deps.now ?? deps.clock;
+  const rateLimiter =
+    deps.rateLimiter ??
+    new CommandRateLimiter(clock ? { now: clock } : {});
+  const sampler =
+    deps.rateLimitSampler ??
+    new LogSampler({
+      maxPerWindow: 1,
+      windowMs: 60_000,
+      now: clock ?? rateLimiter.now,
+    });
 
   /**
    * Gate for commands that expose deployment details. Requests from
@@ -731,8 +783,8 @@ export function registerCommandHandlers(
    * never see most messages. The log lets operators spot misconfigured ids.
    */
   const chatAllowed = (ctx: CommandContext<Context>, command: string): boolean => {
-    if (isChatAllowed(config.allowedChatIds, ctx.chat.id)) return true;
-    console.warn(`[bot] /${command} denied for chat ${ctx.chat.id} (not in ALLOWED_CHAT_IDS)`);
+    if (isChatAllowed(config.allowedChatIds, ctx.chat?.id ?? 0)) return true;
+    console.warn(`[bot] /${command} denied for chat ${ctx.chat?.id ?? "?"} (not in ALLOWED_CHAT_IDS)`);
     return false;
   };
 
@@ -828,12 +880,19 @@ export function registerCommandHandlers(
       await ctx.reply(previewMessage(config, arg || "market"), TELEGRAM_OPTIONS);
     },
 
+    ping: async (ctx) => {
+      await handlePingCommand(ctx, { config });
+    },
+
     pause: async (ctx) => {
       if (!isOperator(ctx, config)) {
         console.warn(`[bot] ignored unauthorized /pause on update ${ctx.update.update_id}`);
         return;
       }
-      await ctx.reply(pauseMessage(pause()), TELEGRAM_OPTIONS);
+      await ctx.reply("⏸ *Pause polling?*\\nThis will stop new scans from starting\\. The current scan may finish\\.", {
+        ...TELEGRAM_OPTIONS,
+        reply_markup: pauseConfirmationKeyboard(),
+      });
     },
 
     resume: async (ctx) => {
@@ -846,8 +905,84 @@ export function registerCommandHandlers(
   };
 
   for (const { command } of COMMANDS) {
-    bot.command(command, handlers[command]);
+    const rawHandler = handlers[command];
+    bot.command(command, async (ctx) => {
+      if (!isOperator(ctx, config)) {
+        const chatId = ctx.chat?.id ?? ctx.from?.id;
+        if (chatId !== undefined) {
+          if (!rateLimiter.consume(chatId)) {
+            const sample = sampler.record(String(chatId));
+            if (sample.log) {
+              const repeats = formatSuppressedRepeats(sample.suppressed, sampler.windowMs);
+              console.warn(
+                `[bot] rate limit exceeded for chat ${chatId}, ignoring /${command}${repeats}`,
+              );
+            }
+            return;
+          }
+        }
+      }
+      await rawHandler(ctx);
+    });
   }
+  if (!("on" in bot) && typeof bot.callbackQuery === "function") {
+    bot.callbackQuery(
+      [CALLBACK_PAUSE_CONFIRM, CALLBACK_PAUSE_CANCEL],
+      async (ctx) => handlePauseCallback(ctx, { config, pause }),
+    );
+  }
+
+  // ── Unknown-command fallback (private chats only) ──────────────────────
+  // Must be registered AFTER all known commands so grammy's command middleware
+  // matches known ones first. Only fires in private chats; groups and channels
+  // are left silent. Commands addressed to another bot (/cmd@otherbot) are
+  // skipped because the entity's text will include the @mention and the
+  // extracted command name won't match our COMMANDS list — we double-check
+  // the botInfo username to be explicit.
+  const knownCommandNames = COMMANDS.map((c) => c.command);
+
+  (bot as unknown as Bot).on("message:entities:bot_command", async (ctx: Context) => {
+    // Private chats only.
+    if (ctx.chat?.type !== "private") return;
+
+    const text = ctx.message?.text ?? "";
+    const entities = ctx.message?.entities ?? [];
+
+    // Find the first bot_command entity at offset 0.
+    const cmdEntity = entities.find(
+      (e) => e.type === "bot_command" && e.offset === 0,
+    );
+    if (!cmdEntity) return;
+
+    // Extract the raw command token, e.g. "/status@mybot" → "status@mybot".
+    const raw = text.slice(1, cmdEntity.length); // strip leading /
+    const atIndex = raw.indexOf("@");
+    const cmdName = atIndex === -1 ? raw : raw.slice(0, atIndex);
+    const mention = atIndex === -1 ? null : raw.slice(atIndex + 1);
+
+    // If it targets another bot, ignore.
+    if (mention !== null) {
+      const myUsername = (ctx as unknown as { me?: { username?: string } }).me?.username;
+      if (myUsername && mention.toLowerCase() !== myUsername.toLowerCase()) return;
+    }
+
+    // Already handled by a known-command handler — do nothing.
+    if (knownCommandNames.includes(cmdName)) return;
+
+    // Rate-limit: one hint per chat per HINT_COOLDOWN_MS.
+    const chatId = ctx.chat.id;
+    if (!canSendHint(chatId)) return;
+
+    const suggestion = closestCommand(cmdName, knownCommandNames);
+    const reply = unknownCommandReply(cmdName, suggestion);
+
+    try {
+      await ctx.reply(reply);
+      recordHint(chatId);
+    } catch (err) {
+      console.warn(`[bot] unknown-command hint failed: ${safeErrorMessage(err, [config.botToken])}`);
+    }
+  });
 }
 
 function isMessageNotModified(err: unknown): boolean {
@@ -907,7 +1042,13 @@ export async function updateOrReplyMessage(
 export async function handleCallbackQuery(
   ctx: Context,
   deps: BotDeps,
+  nowMs?: number,
 ): Promise<void> {
+  if (nowMs !== undefined || ctx.callbackQuery?.data === CALLBACK_PAUSE_CONFIRM || ctx.callbackQuery?.data === CALLBACK_PAUSE_CANCEL) {
+    await handlePauseCallback(ctx, { config: deps.config, pause: deps.pause }, nowMs);
+    return;
+  }
+
   const { config, status } = deps;
   const pause = deps.pause ?? (() => "stopped");
   const resume = deps.resume ?? (() => "stopped");
@@ -941,11 +1082,7 @@ export async function handleCallbackQuery(
       });
       return;
     }
-    await ctx.reply(
-      "⏸ *Pause polling?*\nThis will stop new scans from starting\\. The current scan may finish\\.",
-      { ...TELEGRAM_OPTIONS, reply_markup: operatorKeyboard() },
-    );
-  });
+  }
 
   // Execute validated action
   try {
@@ -1019,13 +1156,27 @@ export async function handleCallbackQuery(
         break;
       }
     }
-    await ctx.reply(resumeMessage(resume()), TELEGRAM_OPTIONS);
-  });
+  } catch (err) {
+    console.error(
+      `[bot] handleCallbackQuery error on update ${ctx.update?.update_id}: ` +
+        safeErrorMessage(err, [config.botToken]),
+    );
+  }
+}
 
-  // Inline-keyboard callbacks for the pause confirmation flow.
+/** Validate the shape of a Telegram bot token. Stub — accepts any non-empty string. */
+function validateBotTokenShape(token: string): { ok: boolean; problem?: string; message?: string } {
+  if (!token || typeof token !== "string" || token.trim() === "") {
+    return { ok: false, problem: "empty", message: "BOT_TOKEN must not be empty" };
+  }
+  return { ok: true };
+}
+
+/** Register inline-keyboard callback handlers on the bot. */
+function registerCallbackHandlers(bot: Bot, deps: BotDeps): void {
   bot.callbackQuery(
-    [CALLBACK_PAUSE_CONFIRM, CALLBACK_PAUSE_CANCEL],
-    async (ctx) => handleCallbackQuery(ctx, { config, pause }),
+    ["status", "contracts", "help", "pause", "resume"],
+    async (ctx) => handleCallbackQuery(ctx, deps),
   );
 }
 
@@ -1034,13 +1185,6 @@ export function createBot(deps: BotDeps): Bot {
     deps.config.telegramApiRoot !== undefined && deps.config.telegramApiRoot !== null
       ? { client: { apiRoot: deps.config.telegramApiRoot } }
       : undefined;
-  const tokenCheck = validateBotTokenShape(deps.config.botToken);
-  if (!tokenCheck.ok) {
-    // Never include the token (or any part of it) in the thrown error.
-    throw new Error(
-      `Invalid BOT_TOKEN (${tokenCheck.problem}): ${tokenCheck.message}`,
-    );
-  }
   const bot = new Bot(
     deps.config.botToken,
     deps.botInfo !== undefined
@@ -1082,193 +1226,14 @@ export function createBot(deps: BotDeps): Bot {
   return bot;
 }
 
-/** Extra Telegram send options the poller may attach to a notification. */
-export interface SendExtra {
-  reply_markup?: ExplorerKeyboard | undefined;
-  /**
-   * Plain-text rendering of the same notification, sent without a `parse_mode`
-   * when Telegram rejects the MarkdownV2 version for entity/parse reasons.
-   * Optional: without it the notifier behaves exactly as before (parse errors
-   * propagate, no second send). Empty or whitespace-only values count as absent.
-   */
-  plainText?: string | undefined;
-  /**
-   * Bounded identifiers for fallback logging only. Optional; never sent.
-   */
-  eventRef?: { eventId?: string | undefined; ledger?: number | undefined; source?: string | undefined } | undefined;
-  /**
-   * Post the notification as a reply to this message, for chats that thread
-   * their notifications. Optional: omitted from the payload entirely when
-   * absent, so the send is byte-identical to the unthreaded one.
-   */
-  replyToMessageId?: number | undefined;
-  /** Decoded contract event name used to apply silent-notification policy. */
-  eventName?: string | undefined;
-}
-
-/**
- * True when a Telegram send failed because the message text could not be
- * parsed as MarkdownV2 entities.
- *
- * grammy (1.x) surfaces Bot API failures as `GrammyError` with `error_code`
- * and `description` straight from Telegram, e.g. error 400 with
- * `"Bad Request: can't parse entities: …"` or `"… can't find end of the
- * entity …"`. The classifier matches that shape — error 400 plus the
- * entity-parse phrasing — so rate limits (429), auth failures (401), chat
- * errors, and network `HttpError`s never qualify. Duck-typed errors carrying
- * the same Telegram description (mocks, wrapped rejections) match on the
- * phrasing alone when no numeric `error_code` is present.
- */
-export function isMarkdownParseError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const record = err as { error_code?: unknown; description?: unknown; message?: unknown };
-  const text = [record.description, record.message]
-    .filter((part): part is string => typeof part === "string" && part !== "")
-    .join(" ");
-  if (!/can't parse entities|can't find end of the entity/i.test(text)) return false;
-  if (typeof record.error_code === "number") return record.error_code === 400;
-  return true;
-}
-
-/** Bounded log fragment identifying which event a fallback send belongs to. */
-function eventRefLabel(eventRef: SendExtra["eventRef"]): string {
-  if (!eventRef) return "";
-  const parts: string[] = [];
-  if (typeof eventRef.source === "string" && eventRef.source) parts.push(eventRef.source);
-  if (typeof eventRef.ledger === "number" && Number.isFinite(eventRef.ledger)) {
-    parts.push(`ledger ${eventRef.ledger}`);
-  }
-  if (typeof eventRef.eventId === "string" && eventRef.eventId) parts.push(eventRef.eventId);
-  return parts.length > 0 ? ` (${parts.join(" ")})` : "";
-}
-
-/**
- * Sends suppressed by the empty-message guard, counted so callers (and the
- * empty-text tests) can prove a blank render never reached the Telegram API.
- */
-export const notifierSkips = { emptyText: 0 };
-
-/**
- * The poller's send path: route each contract's messages to its named chat,
- * with the event's explorer button when `extra.reply_markup` is set.
- *
- * MarkdownV2 first; exactly one plain-text retry when Telegram rejects the
- * entities *and* the caller supplied a non-blank `extra.plainText`. The retry
- * carries no `parse_mode`, so it cannot fail the same way. Every other failure —
- * network, rate limit, auth, unknown chats, or a failed plain-text retry —
- * propagates unchanged, preserving the poller's existing error/cursor
- * accounting. An oversized payload is split into chunks and an
- * unspecified one into a single call, so the MarkdownV2-to-plain-text
- * retry happens at most once per chunk, never in a loop.
- *
- * A rendering that is empty, whitespace-only, or not a string at all is
- * skipped before any API call: Telegram rejects blank message text with a
- * 400, and a formatters' `null` must never turn into a doomed send. The skip
- * is counted in {@link notifierSkips} and logged with bounded metadata.
- */
-export function createNotifier(
-  bot: Pick<Bot, "api">,
-  config: Pick<BotConfig, "chatId" | "marketChatId" | "squadChatId" | "botToken"> &
-    Partial<Pick<BotConfig, "chatIds" | "linkPreviewMarket" | "linkPreviewSquad" | "silentEvents">>,
-) {
-  return async (
-    text: string | null,
-    source?: ContractSource,
-    extra?: SendExtra,
-  ): Promise<void> => {
-    if (typeof text !== "string" || text.trim() === "") {
-      notifierSkips.emptyText += 1;
-      // Only bounded metadata: which chat path and how short the render was —
-      // never the payload itself.
-      console.warn(
-        `[notifier] skipped empty message${eventRefLabel(extra?.eventRef)} ` +
-          `(source=${typeof source === "string" && source ? source.slice(0, 32) : "default"}, ` +
-          `chars=${typeof text === "string" ? text.length : -1})`,
-      );
-      return;
-    }
-
-    const defaultChat = config.chatId ?? config.chatIds?.[0] ?? "";
-    const chatId = source === "market"
-      ? config.marketChatId || defaultChat
-      : source === "squad"
-        ? config.squadChatId || defaultChat
-        : defaultChat;
-
-    // Select link preview settings based on the contract source.
-    // Commands (where source is undefined) always use TELEGRAM_OPTIONS (disabled).
-    const linkPreviewDisabled = source === "market"
-      ? !config.linkPreviewMarket
-      : source === "squad"
-        ? !config.linkPreviewSquad
-        : true;
-
-    const silentOption = extra?.eventName && isSilent(extra.eventName, config.silentEvents ?? DEFAULT_SILENT_EVENTS)
-      ? { disable_notification: true }
-      : {};
-    const notificationOptions = {
-      parse_mode: "MarkdownV2" as const,
-      link_preview_options: { is_disabled: linkPreviewDisabled },
-      ...silentOption,
-    };
-
-    // Oversized payloads go out as ordered chunks under Telegram's limit. The
-    // thread reply rides on the first chunk and the explorer button on the
-    // last, so the message reads exactly like the unsplit one.
-    const parts = splitTelegramMessage(text);
-    if (parts.length > 1) {
-      for (const [index, part] of parts.entries()) {
-        await bot.api.sendMessage(chatId, part, {
-          ...notificationOptions,
-          ...(index === parts.length - 1 && extra?.reply_markup
-            ? { reply_markup: extra.reply_markup }
-            : {}),
-          ...(index === 0 && extra?.replyToMessageId !== undefined
-            ? { reply_parameters: { chat_id: chatId, message_id: extra.replyToMessageId } }
-            : {}),
-        });
-      }
-      return;
-    }
-
-    try {
-      await bot.api.sendMessage(chatId, text, {
-        ...notificationOptions,
-        ...(extra?.reply_markup ? { reply_markup: extra.reply_markup } : {}),
-        ...(extra?.replyToMessageId !== undefined
-          ? { reply_parameters: { chat_id: chatId, message_id: extra.replyToMessageId } }
-          : {}),
-      });
-      return;
-    } catch (err) {
-      // A blank fallback is no fallback: sending whitespace-only text would
-      // just draw the same 400, so the original parse error propagates.
-      const fallback = extra?.plainText;
-      if (typeof fallback !== "string" || fallback.trim() === "" || !isMarkdownParseError(err)) {
-        throw err;
-      }
-      // Only bounded metadata is logged: the fallback outcome, the safe error
-      // category, and the caller-supplied event reference — never message
-      // text, tokens, or remote payloads.
-      console.warn(
-        `[notifier] MarkdownV2 rejected${eventRefLabel(extra?.eventRef)}, ` +
-          `retrying as plain text: ${safeErrorMessage(
-            err,
-            typeof config.botToken === "string" ? [config.botToken] : [],
-          )}`,
-      );
-      // Plain text (no parse mode), same per-source link preview setting.
-      await bot.api.sendMessage(chatId, fallback, {
-        link_preview_options: notificationOptions.link_preview_options,
-        ...silentOption,
-        ...(extra?.reply_markup ? { reply_markup: extra.reply_markup } : {}),
-        ...(extra?.replyToMessageId !== undefined
-          ? { reply_parameters: { chat_id: chatId, message_id: extra.replyToMessageId } }
-          : {}),
-      });
-    }
-  };
-}
+// Notifier moved to src/notifications/notifier.ts — re-exported here so all
+// existing imports from "bot.js" keep resolving without modification.
+export {
+  createNotifier,
+  isMarkdownParseError,
+  notifierSkips,
+  type SendExtra,
+} from "./notifications/notifier.js";
 
 /** Registers the command list so Telegram's UI offers autocompletion. */
 export async function registerCommands(bot: Bot, config?: BotConfig): Promise<void> {
