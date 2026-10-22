@@ -187,6 +187,7 @@ export interface NotificationMarkdownTemplates {
     captain: string,
     feeBps: string,
     deadline: string,
+    category?: string | null,
   ): string;
   deposited(marketId: string, amount: string, side: string, participant: string): string;
   withdrawn(marketId: string, participant: string, amount: string, side: string): string;
@@ -259,6 +260,7 @@ export interface NotificationPlainTemplates {
     captain: string,
     feeBps: string,
     deadline: string,
+    category?: string | null,
   ): string;
   deposited(
     marketId: string | number,
@@ -678,6 +680,12 @@ const ES_NOTIFICATION_MD: NotificationMarkdownTemplates = {
     deadline: string,
   ): string =>
     `🆕 *Nuevo mercado de escuadrón* \\#${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}`,
+    category?: string | null,
+  ): string =>
+    (
+      `🆕 *Nuevo mercado de escuadrón* \\#${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}` +
+      (category ? `\nCategoría: ${category}` : "")
+    ),
 
   deposited: (marketId: string, amount: string, side: string, participant: string): string =>
     `➕ *Escuadrón \\#${marketId}* — ${amount} en *${side}*\nParticipante: ${participant}`,
@@ -786,6 +794,12 @@ const ES_NOTIFICATION_PLAIN: NotificationPlainTemplates = {
     deadline: string,
   ): string =>
     `Nuevo mercado de escuadrón #${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}`,
+    category?: string | null,
+  ): string =>
+    (
+      `Nuevo mercado de escuadrón #${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}` +
+      (category ? `\nCategoría: ${category}` : "")
+    ),
 
   deposited: (
     marketId: string | number,

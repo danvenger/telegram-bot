@@ -31,6 +31,25 @@ import { settlementLines } from "./settlement.js";
 import type { StellarConfig } from "../config.js";
 import { messagesFor, type Messages } from "../i18n.js";
 import { formatDeadline } from "./time.js";
+import {
+  EXPLORER_BUTTON_TEXT,
+  MIMIR_APP_BUTTON_TEXT,
+  NOTIFICATION_MD,
+  NOTIFICATION_PLAIN,
+} from "../i18n.js";
+import {
+  highlightLevel,
+  highlightMarker,
+  prefixFirstLine,
+  type HighlightThresholds,
+} from "./highlights.js";
+export {
+  highlightLevel,
+  highlightMarker,
+  prefixFirstLine,
+  type HighlightLevel,
+  type HighlightThresholds,
+} from "./highlights.js";
 
 /** Telegram's MarkdownV2 reserved set. All of it must be escaped, everywhere. */
 const MDV2_RESERVED = /[_*[\]()~`>#+\-=|{}.!\\]/g;
@@ -383,6 +402,11 @@ function headline(
     // ── mimir-market ────────────────────────────────────────────────────────
     case "claim_created":
       return md.claimCreated(
+    case "claim_created": {
+      const icon = iconForCategory(p.category);
+      const cat = escapeMd(clip(sanitizeUserText(p.category)));
+      const formattedCategory = cat ? `${icon} ${cat}` : icon;
+      return NOTIFICATION_MD.claimCreated(
         String(p.claimId),
         escapeMd(clip(p.category)),
         who(p.creator),
@@ -408,6 +432,7 @@ function headline(
 
     case "market_settled": {
       const lines = settlementLines(p, messages.settlementLabels).map(escapeMd);
+      const lines = settlementLines(p).map(escapeMd);
       return md.marketSettled(
         String(p.claimId),
         usdc(p.totalPaid),
@@ -530,6 +555,7 @@ export function formatEvent(
   try {
     const messages = messagesFor(config.locale);
     const head = headline(messages, event, currentMs);
+    let head = headline(event, currentMs);
     if (head === null) return null;
     const body = `${head}\n${footer(config, event)}`;
     if (config.channelPreviewMode) {
@@ -579,6 +605,12 @@ function plainHeadline(
     // ── mimir-market ────────────────────────────────────────────────────────
     case "claim_created":
       return plain.claimCreated(p.claimId, clip(p.category), plainWho(p.creator));
+    case "claim_created": {
+      const icon = iconForCategory(p.category);
+      const cat = clip(sanitizeUserText(p.category));
+      const formattedCategory = cat ? `${icon} ${cat}` : icon;
+      return NOTIFICATION_PLAIN.claimCreated(p.claimId, formattedCategory, plainWho(p.creator));
+    }
 
     case "claim_challenged":
       return plain.claimChallenged(
@@ -600,6 +632,7 @@ function plainHeadline(
 
     case "market_settled": {
       const lines = settlementLines(p, messages.settlementLabels);
+      const lines = settlementLines(p);
       return plain.marketSettled(
         p.claimId,
         plainUsdc(p.totalPaid),
@@ -715,6 +748,14 @@ export function formatPlainTextEvent(
   nowMs?: number,
 ): string | null {
   const messages = messagesFor(config.locale);
+  const currentMs = nowMs ?? config.nowMs ?? (event?.at && event.at > 0 ? event.at * 1000 : Date.now());
+  try {
+    const head = plainHeadline(messages, event, currentMs);
+  const nowMs = typeof nowMsOrThresholds === "number" ? nowMsOrThresholds : undefined;
+  const thresholds =
+    typeof nowMsOrThresholds === "object" && nowMsOrThresholds !== null
+      ? nowMsOrThresholds
+      : undefined;
   const currentMs = nowMs ?? config.nowMs ?? (event?.at && event.at > 0 ? event.at * 1000 : Date.now());
   try {
     const head = plainHeadline(messages, event, currentMs);

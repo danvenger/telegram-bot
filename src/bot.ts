@@ -714,6 +714,12 @@ export function registerCommandHandlers(
   const registrar = bot as {
     command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => unknown;
     callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => unknown;
+  bot: Bot | { command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => void; callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => void },
+  deps: BotDeps,
+): void {
+  const registrar = bot as {
+    command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => unknown;
+    callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => unknown;
   };
   const { config, status } = deps;
   const version = deps.version ?? "unknown";
