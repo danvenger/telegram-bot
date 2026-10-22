@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { COMMAND_DESCRIPTIONS, SUPPORTED_LOCALES, getMessages } from '../dist/i18n.js';
+import { COMMAND_DESCRIPTIONS, SUPPORTED_LOCALES, messagesFor } from '../dist/i18n.js';
 import { COMMANDS } from '../dist/bot.js';
 
 const NAME_PATTERN = /^[a-z0-9_]{1,32}$/;
@@ -37,7 +37,7 @@ test('COMMAND_DESCRIPTIONS descriptions fit Telegram limits', () => {
 
 test('every locale keeps command descriptions plain and within Telegram limits', () => {
   for (const locale of SUPPORTED_LOCALES) {
-    const descriptions = getMessages(locale).COMMAND_DESCRIPTIONS;
+    const descriptions = messagesFor(locale).commandDescriptions;
     for (const [name, description] of Object.entries(descriptions)) {
       assert.match(name, NAME_PATTERN, `${locale}: invalid command name "${name}"`);
       assert.strictEqual(
@@ -71,7 +71,7 @@ test('every bot command has a description', () => {
 
 test('registered commands expose a non-empty description in every locale', () => {
   for (const locale of SUPPORTED_LOCALES) {
-    const descriptions = getMessages(locale).COMMAND_DESCRIPTIONS;
+    const descriptions = messagesFor(locale).commandDescriptions;
     for (const { command } of COMMANDS) {
       const description = descriptions[command];
       assert.ok(

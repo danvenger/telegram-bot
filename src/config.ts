@@ -51,7 +51,12 @@ import {
   parseNotificationFeatureFlags,
   type NotificationFeatureFlags,
 } from "./notifications/featureFlags.js";
-import { DEFAULT_LOCALE, normalizeLocale, SUPPORTED_LOCALES, type Locale } from "./i18n.js";
+import {
+  DEFAULT_LOCALE,
+  normalizeLocale,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from "./i18n.js";
 import { DEFAULT_SILENT_EVENTS, KNOWN_EVENT_NAMES } from "./notifications/priority.js";
 
 /** Named Stellar networks the bot understands. `custom` is any other passphrase. */
@@ -163,6 +168,12 @@ export const APP_VERSION: string = (() => {
 export interface StellarConfig {
   /** Named network, derived from STELLAR_NETWORK or inferred from the passphrase. */
   network?: StellarNetwork;
+  /**
+   * Locale for every user-facing string (MIMIR_LOCALE). Optional on this
+   * chain-only type so hand-built configs keep working; `loadConfig` always
+   * sets it, and callers fall back to {@link DEFAULT_LOCALE} when absent.
+   */
+  locale?: Locale;
   marketContractId: string;
   squadContractId: string;
   marketContractVersion: string;
@@ -180,6 +191,8 @@ export interface TelegramRoute {
 }
 
 export interface BotConfig extends StellarConfig {
+  /** Locale for every user-facing string, from MIMIR_LOCALE. */
+  locale: Locale;
   /** Semver string from `package.json`, or `"unknown"` if unavailable. */
   version: string;
   botToken: string;
@@ -214,8 +227,6 @@ export interface BotConfig extends StellarConfig {
   csvOutputFile: string;
   /** Coarse notification feature flags (see NOTIFY_* env vars). */
   featureFlags: NotificationFeatureFlags;
-  /** Language for user-facing text (BOT_LOCALE); English when unset. */
-  locale: Locale;
   /** Append-only JSONL audit trail (see src/audit.ts). Empty disables it. */
   auditFile: string;
   /**
@@ -294,6 +305,7 @@ export class ConfigError extends Error {
 
 const DEFAULTS = {
   network: "testnet" as StellarNetwork,
+  locale: DEFAULT_LOCALE,
   rpcUrl: NETWORK_RPC_URLS.testnet,
   horizonUrl: NETWORK_HORIZON_URLS.testnet,
   networkPassphrase: NETWORK_PASSPHRASES.testnet,
@@ -498,25 +510,6 @@ function collector(profile: Record<string, string>) {
         );
       }
       return value;
-    },
-
-    /**
-     * A supported language code. Accepts a region suffix (`es-MX`) because
-     * platforms often expose the deployment's full locale, but an unknown
-     * language fails boot rather than silently rendering English.
-     */
-    locale(name: string, fallback: Locale): Locale {
-      const raw = get(name);
-      if (raw === undefined) return fallback;
-      const normalized = normalizeLocale(raw);
-      if (normalized === null) {
-        problems.push(
-          `${name} must be one of ${SUPPORTED_LOCALES.join(", ")} ` +
-            `(a region suffix such as es-MX is accepted); got "${raw}"`,
-        );
-        return fallback;
-      }
-      return normalized;
     },
 
     contractVersion(name: string, fallback: string): string {
@@ -849,8 +842,17 @@ export function loadConfig(): BotConfig {
   for (const problem of featureFlagsParsed.problems) c.problems.push(problem);
   const chatIds = c.chatIds("TELEGRAM_CHAT_ID");
 
+  const localeInput = read("MIMIR_LOCALE");
+  const locale = localeInput === undefined ? DEFAULT_LOCALE : normalizeLocale(localeInput);
+  if (locale === null) {
+    c.problems.push(
+      `MIMIR_LOCALE must be one of ${SUPPORTED_LOCALES.join(", ")}; got "${localeInput}"`,
+    );
+  }
+
   const config: BotConfig = {
     ...stellar,
+    locale: locale ?? DEFAULT_LOCALE,
     version: APP_VERSION,
     botToken: c.botToken("BOT_TOKEN"),
     chatId: chatIds[0] ?? "",
@@ -873,7 +875,6 @@ export function loadConfig(): BotConfig {
     interSendDelayMs: c.int("INTER_SEND_DELAY_MS", DEFAULTS.interSendDelayMs, 0),
     metricsPort: c.optionalPort("METRICS_PORT"),
     notificationCategories: notificationCategoriesFrom(),
-    locale: c.locale("BOT_LOCALE", DEFAULT_LOCALE),
     silentEvents: silentEventsFrom(c),
     csvOutputFile: path.resolve(process.cwd(), c.get("CSV_OUTPUT_FILE") ?? DEFAULTS.csvOutputFile),
     featureFlags: featureFlagsParsed.flags,
@@ -1037,6 +1038,7 @@ export interface ConfigKeySpec {
  */
 export const CONFIG_KEYS: readonly ConfigKeySpec[] = [
   { key: "MIMIR_PROFILE", secret: false },
+  { key: "MIMIR_LOCALE", secret: false, hasBuiltInDefault: true },
   { key: "MARKET_CONTRACT_ID", secret: false },
   { key: "SQUAD_CONTRACT_ID", secret: false },
   { key: "MARKET_CONTRACT_VERSION", secret: false, hasBuiltInDefault: true },
@@ -1092,7 +1094,6 @@ export const CONFIG_KEYS: readonly ConfigKeySpec[] = [
   { key: "STARTUP_HEALTH_RETRY_MS", secret: false, hasBuiltInDefault: true },
   { key: "SHUTDOWN_TIMEOUT_MS", secret: false, hasBuiltInDefault: true },
   { key: "TELEGRAM_SEND_TIMEOUT_MS", secret: false, hasBuiltInDefault: true },
-  { key: "BOT_LOCALE", secret: false, hasBuiltInDefault: true },
   { key: "CHANNEL_PREVIEW_MODE", secret: false, hasBuiltInDefault: true },
   { key: "LINK_PREVIEW_MARKET", secret: false, hasBuiltInDefault: true },
   { key: "LINK_PREVIEW_SQUAD", secret: false, hasBuiltInDefault: true },

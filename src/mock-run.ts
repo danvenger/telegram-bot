@@ -32,7 +32,6 @@ import {
   networkLabel,
 } from "./config.js";
 import { startHealthServer } from "./health.js";
-import { setLocale } from "./i18n.js";
 import { safeErrorMessage } from "./notifications/format.js";
 import { createPoller } from "./poller.js";
 import { createRpcServer } from "./stellar/client.js";
@@ -70,8 +69,6 @@ async function main(): Promise<void> {
 
   // Profile defaults may name the default port; the bound port is authoritative.
   const config = { ...loadConfig(), rpcUrl: mock.url };
-  // The dry run renders real notification text, so it follows BOT_LOCALE too.
-  setLocale(config.locale);
 
   console.log(`[dry-run] Mimir notifier dry run — Telegram sends are logged, not delivered`);
   console.log(`[dry-run] profile   ${activeProfileName() ?? "none"}`);

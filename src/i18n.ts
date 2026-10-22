@@ -5,6 +5,17 @@
  * numbers, addresses, amounts) at the call site — the localization layer
  * provides the template; the caller provides the variables.
  *
+ * ── Choosing a language ─────────────────────────────────────────────────────
+ * `MIMIR_LOCALE` selects the locale (`en` or `es`; unset means `en`). The
+ * selected locale is carried on the config as `config.locale`, so the bot and
+ * the formatters render every message in it. Import the named English exports
+ * below only when you explicitly want the reference language; product code
+ * should use {@link messagesFor} with the configured locale.
+ *
+ * The named exports (`HELP_TITLE`, `NOTIFICATION_MD`, ...) remain the English
+ * strings for backwards compatibility, and are also available as
+ * `messagesFor("en")`.
+ *
  * ── MarkdownV2 notes ────────────────────────────────────────────────────────
  * Static strings that will be sent to Telegram via MarkdownV2 are stored
  * pre-escaped where they contain reserved characters. Dynamic interpolations
@@ -13,24 +24,57 @@
  * as-is; they never contain Markdown syntax.
  *
  * ── Adding a string ─────────────────────────────────────────────────────────
- * 1. Add the constant to the appropriate namespace below.
- * 2. Replace the inline literal in the source file with a reference.
- * 3. Add a test in tests/i18n.test.mjs that imports the key and asserts both
+ * 1. Add the key to the relevant template interface below.
+ * 2. Add the English string to the matching constant.
+ * 3. Add the translation to every locale entry in `MESSAGES` (TypeScript
+ *    rejects a missing or malformed entry).
+ * 4. Replace the inline literal in the source file with a reference through
+ *    `messagesFor(locale)`.
+ * 5. Add a test in tests/i18n.test.mjs that imports the key and asserts both
  *    the value and that the caller substitutes dynamic parts correctly.
- * 4. Add the key to `Messages` below (the base bundle's shape) and either
- *    translate it in every locale bundle or let it fall back to English.
  *
- * ── Choosing a language ─────────────────────────────────────────────────────
- * The exported constants below are the English base bundle, kept as named
- * exports so existing callers and tests keep importing them directly. Runtimes
- * that render for a configured audience instead read the active bundle through
- * {@link messages}, which {@link setLocale} points at one of the locale bundles
- * ({@link getMessages}). `BOT_LOCALE` selects it at boot (see src/config.ts).
- * A bundle may translate only part of the base: omitted keys fall back to
- * English, so a translation can land incrementally without breaking a build.
+ * ── Adding a language ───────────────────────────────────────────────────────
+ * 1. Add the code to `SUPPORTED_LOCALES` and a label to `LOCALE_LABELS`.
+ * 2. Implement `Messages` for it (typically by copying `EN_MESSAGES` and
+ *    translating every string, keeping the MarkdownV2 escaping rules).
+ * 3. Register it in `MESSAGES`; the compiler then enforces completeness.
  */
 
-// ── Bot: help and lifecycle ──────────────────────────────────────────────────
+// ── Locale registry ──────────────────────────────────────────────────────────
+
+/** Locales this build can render. Add a code here and to `MESSAGES`. */
+export const SUPPORTED_LOCALES = ["en", "es"] as const;
+
+/** A locale this build can render. */
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+
+/** Locale used when `MIMIR_LOCALE` is unset. */
+export const DEFAULT_LOCALE: Locale = "en";
+
+/** Human-readable name of each locale, for docs and error messages. */
+export const LOCALE_LABELS: Readonly<Record<Locale, string>> = {
+  en: "English",
+  es: "Español",
+};
+
+/**
+ * Normalize an operator-supplied locale tag.
+ *
+ * Accepts case and region variants (`es`, `ES`, `es-ES`, `es_MX`) and maps them
+ * to a supported base locale. Returns null when the language is unsupported, so
+ * config loading can fail fast instead of silently rendering English.
+ */
+export function normalizeLocale(value: string): Locale | null {
+  const base = value.trim().toLowerCase().split(/[-_]/, 1)[0] ?? "";
+  return (SUPPORTED_LOCALES as readonly string[]).includes(base) ? (base as Locale) : null;
+}
+
+/** True when `value` is exactly a supported locale code. */
+export function isLocale(value: string): value is Locale {
+  return (SUPPORTED_LOCALES as readonly string[]).includes(value);
+}
+
+// ── Bot: help and lifecycle (English reference strings) ──────────────────────
 
 /** Help title (MarkdownV2). */
 export const HELP_TITLE = "*Mimir notifier*";
@@ -68,8 +112,25 @@ export const AUDIT_CLI_HINT =
 
 // ── Telegram command descriptions (shown in the UI autocomplete) ─────────────
 
+/** Every command the bot registers, in menu order. */
+export const COMMAND_NAMES = [
+  "start",
+  "help",
+  "about",
+  "status",
+  "audit",
+  "contracts",
+  "health",
+  "preview",
+  "pause",
+  "resume",
+] as const;
+
+/** A registered command name. */
+export type CommandName = (typeof COMMAND_NAMES)[number];
+
 /** Descriptions registered with `setMyCommands`. */
-export const COMMAND_DESCRIPTIONS = {
+export const COMMAND_DESCRIPTIONS: Readonly<Record<CommandName, string>> = {
   start: "What this bot does",
   help: "Show help",
   about: "About this bot",
@@ -83,12 +144,190 @@ export const COMMAND_DESCRIPTIONS = {
   resume: "Operator only: resume polling now",
 } as const;
 
-// ── Notifications: event headlines (MarkdownV2) ──────────────────────────────
-// Template functions. Every dynamic value is supplied by the caller and must
-// already be escapeMd-escaped before being passed in. Static reserved chars
-// inside the template strings are pre-escaped here.
+// ── Notification template interfaces ─────────────────────────────────────────
 
-export const NOTIFICATION_MD = {
+/**
+ * MarkdownV2 notification headlines. Every dynamic value is supplied by the
+ * caller and must already be `escapeMd`-escaped before being passed in. Static
+ * reserved characters inside the templates are pre-escaped in each locale.
+ */
+export interface NotificationMarkdownTemplates {
+  // ── mimir-market ────────────────────────────────────────────────────────
+  claimCreated(claimId: string, category: string, creator: string): string;
+  claimChallenged(claimId: string, stake: string, challenger: string): string;
+  claimResolved(
+    claimId: string,
+    winnerSide: string,
+    confidence: string,
+    summary: string | null,
+  ): string;
+  claimCancelled(claimId: string): string;
+  marketSettled(
+    claimId: string,
+    totalPaid: string,
+    totalFees: string,
+    owedToChallengers: string,
+    ...rest: (readonly string[] | string | undefined)[]
+  ): string;
+  challengerPaid(
+    claimId: string,
+    challenger: string,
+    stake: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string;
+  feeClaimed(amount: string, recipient: string): string;
+  withdrawal(amount: string, to: string): string;
+  withdrawalPending(amount: string, to: string): string;
+
+  // ── mimir-squad ─────────────────────────────────────────────────────────
+  marketCreated(
+    marketId: string,
+    question: string,
+    captain: string,
+    feeBps: string,
+    deadline: string,
+    category?: string | null,
+  ): string;
+  deposited(marketId: string, amount: string, side: string, participant: string): string;
+  withdrawn(marketId: string, participant: string, amount: string, side: string): string;
+  resolved(marketId: string, result: string, poolA: string, poolB: string): string;
+  claimed(
+    marketId: string,
+    participant: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string;
+  feesClaimedSquad(amount: string, recipient: string): string;
+
+  // ── Fallback and preview ────────────────────────────────────────────────
+  /**
+   * Sent when an event payload is malformed or the formatter throws.
+   * All parameters must already be escapeMd-escaped.
+   */
+  fallbackEvent(
+    source: string,
+    contract: string,
+    ledger: string,
+    reason: string,
+    txPart: string,
+  ): string;
+  previewModePrefix: string;
+  channelPreviewMarket: string;
+  channelPreviewSquad: string;
+}
+
+/** Plain-text notification headlines, used without a parse_mode. */
+export interface NotificationPlainTemplates {
+  // ── mimir-market ────────────────────────────────────────────────────────
+  claimCreated(claimId: string | number, category: string, creator: string): string;
+  claimChallenged(
+    claimId: string | number,
+    stake: string,
+    challenger: string,
+  ): string;
+  claimResolved(
+    claimId: string | number,
+    winnerSide: string,
+    confidence: string,
+    summary: string | null,
+  ): string;
+  claimCancelled(claimId: string | number): string;
+  marketSettled(
+    claimId: string | number,
+    totalPaid: string,
+    totalFees: string,
+    owedToChallengers: string,
+    ...rest: (readonly string[] | string | undefined)[]
+  ): string;
+  challengerPaid(
+    claimId: string | number,
+    challenger: string,
+    stake: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string;
+  feeClaimed(amount: string, recipient: string): string;
+  withdrawal(amount: string, to: string): string;
+  withdrawalPending(amount: string, to: string): string;
+
+  // ── mimir-squad ─────────────────────────────────────────────────────────
+  marketCreated(
+    marketId: string | number,
+    question: string,
+    captain: string,
+    feeBps: string,
+    deadline: string,
+    category?: string | null,
+  ): string;
+  deposited(
+    marketId: string | number,
+    amount: string,
+    side: string,
+    participant: string,
+  ): string;
+  withdrawn(
+    marketId: string | number,
+    participant: string,
+    amount: string,
+    side: string,
+  ): string;
+  resolved(
+    marketId: string | number,
+    result: string,
+    poolA: string,
+    poolB: string,
+  ): string;
+  claimed(
+    marketId: string | number,
+    participant: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string;
+  feesClaimedSquad(amount: string, recipient: string): string;
+
+  /**
+   * Last-resort one-liner when even the plain-text formatter cannot render.
+   * Never returns an empty string.
+   */
+  minimal(source: string, ledger: string, eventId: string): string;
+}
+
+/** Operator pause replies (MarkdownV2). */
+export interface PauseMessages {
+  paused: string;
+  alreadyPaused: string;
+  stopped: string;
+}
+
+/** Operator resume replies (MarkdownV2). */
+export interface ResumeMessages {
+  resumed: string;
+  alreadyRunning: string;
+  stopped: string;
+}
+
+/** Every localized string the bot can render. */
+export interface Messages {
+  helpTitle: string;
+  helpIntro: string;
+  pauseMessages: PauseMessages;
+  resumeMessages: ResumeMessages;
+  auditCliHint: string;
+  commandDescriptions: Readonly<Record<CommandName, string>>;
+  notificationMd: NotificationMarkdownTemplates;
+  notificationPlain: NotificationPlainTemplates;
+  explorerButtonText: string;
+  mimirAppButtonText: string;
+}
+
+// ── Notifications: event headlines (English MarkdownV2) ─────────────────────
+
+export const NOTIFICATION_MD: NotificationMarkdownTemplates = {
   // ── mimir-market ────────────────────────────────────────────────────────
   /** @param claimId already-escaped string, e.g. "7" */
   claimCreated: (claimId: string, category: string, creator: string): string =>
@@ -186,10 +425,6 @@ export const NOTIFICATION_MD = {
     `🧾 *Squad fees claimed* — ${amount} to ${recipient}`,
 
   // ── Fallback ─────────────────────────────────────────────────────────────
-  /**
-   * Sent when an event payload is malformed or the formatter throws.
-   * All parameters must already be escapeMd-escaped.
-   */
   fallbackEvent: (
     source: string,
     contract: string,
@@ -205,12 +440,11 @@ export const NOTIFICATION_MD = {
   // ── Channel preview headers ──────────────────────────────────────────────
   channelPreviewMarket: "🧪 *Channel Preview — mimir\\-market*",
   channelPreviewSquad: "🧪 *Channel Preview — mimir\\-squad*",
-} as const;
+};
 
-// ── Notifications: event headlines (plain text) ──────────────────────────────
-// Mirror of NOTIFICATION_MD for use without a parse_mode. No Markdown at all.
+// ── Notifications: event headlines (English plain text) ─────────────────────
 
-export const NOTIFICATION_PLAIN = {
+export const NOTIFICATION_PLAIN: NotificationPlainTemplates = {
   // ── mimir-market ────────────────────────────────────────────────────────
   claimCreated: (claimId: string | number, category: string, creator: string): string =>
     `New claim #${claimId}\nCategory: ${category}\nCreator: ${creator}`,
@@ -322,17 +556,13 @@ export const NOTIFICATION_PLAIN = {
   feesClaimedSquad: (amount: string, recipient: string): string =>
     `Squad fees claimed — ${amount} to ${recipient}`,
 
-  /**
-   * Last-resort one-liner when even the plain-text formatter cannot render.
-   * Never returns an empty string.
-   */
   minimal: (source: string, ledger: string, eventId: string): string => {
     const idPart = eventId ? ` (${eventId})` : "";
     return `Mimir event (${source}) — ${ledger}${idPart}`;
   },
-} as const;
+};
 
-// ── Explorer button ──────────────────────────────────────────────────────────
+// ── Explorer button (English) ────────────────────────────────────────────────
 
 /** Text shown on the Telegram inline keyboard button for explorer links. */
 export const EXPLORER_BUTTON_TEXT = "View on Explorer";
@@ -343,404 +573,310 @@ export const EXPLORER_BUTTON_TEXT = "View on Explorer";
  */
 export const MIMIR_APP_BUTTON_TEXT = "Open in Mimir";
 
-// ── Settlement breakdown labels ─────────────────────────────────────────────
+// ── Spanish translations ─────────────────────────────────────────────────────
+// Same shape and MarkdownV2 rules as the English reference strings above.
+// Dynamic values arrive already escaped; static reserved characters are
+// escaped here.
 
-/**
- * Row labels for the settlement accounting lines (`src/notifications/
- * settlement.ts`). Plain text: the lines are escaped by the caller when the
- * message is MarkdownV2.
- */
-export const SETTLEMENT_LABELS = {
-  owedToChallengers: "Owed to challengers",
-  totalFees: "Total fees",
-  dust: "Dust",
-} as const;
-
-// ── Locale registry ─────────────────────────────────────────────────────────
-
-/**
- * String shape a locale must provide: the base bundle with literal string types
- * widened, so a translation is typed like the English original instead of
- * having to reproduce its exact text.
- */
-export type DeepWiden<T> = T extends string
-  ? string
-  : T extends (...args: infer A) => string
-    ? (...args: A) => string
-    : T extends object
-      ? { -readonly [K in keyof T]: DeepWiden<T[K]> }
-      : T;
-
-/** Every user-facing string the bot can render, in one bundle. */
-export interface Messages {
-  HELP_TITLE: string;
-  HELP_INTRO: string;
-  PAUSE_MESSAGES: DeepWiden<typeof PAUSE_MESSAGES>;
-  RESUME_MESSAGES: DeepWiden<typeof RESUME_MESSAGES>;
-  AUDIT_CLI_HINT: string;
-  COMMAND_DESCRIPTIONS: DeepWiden<typeof COMMAND_DESCRIPTIONS>;
-  NOTIFICATION_MD: DeepWiden<typeof NOTIFICATION_MD>;
-  NOTIFICATION_PLAIN: DeepWiden<typeof NOTIFICATION_PLAIN>;
-  EXPLORER_BUTTON_TEXT: string;
-  MIMIR_APP_BUTTON_TEXT: string;
-  SETTLEMENT_LABELS: DeepWiden<typeof SETTLEMENT_LABELS>;
-}
-
-/**
- * A translation bundle. Every key is optional at both levels — a table is
- * merged key-by-key over English, and a nested table may translate any subset
- * of its entries.
- */
-export type MessageOverrides = {
-  [K in keyof Messages]?: Messages[K] extends (...args: never[]) => string
-    ? Messages[K]
-    : Messages[K] extends object
-      ? { [P in keyof Messages[K]]?: Messages[K][P] }
-      : Messages[K];
+const ES_PAUSE_MESSAGES: PauseMessages = {
+  paused:
+    "*Sondeo en pausa*\nEl escaneo actual puede terminar, pero no se iniciará ningún ciclo nuevo\\. Los cursores no cambiaron\\.",
+  alreadyPaused: "*El sondeo ya está en pausa*",
+  stopped: "*El sondeo no puede pausarse* — el proceso se está deteniendo\\.",
 };
 
-/** Languages the bot ships with. `en` is the base and the fallback. */
-export const SUPPORTED_LOCALES = ["en", "es"] as const;
-
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
-
-/** Used when nothing selects a language, and whenever a key is untranslated. */
-export const DEFAULT_LOCALE: Locale = "en";
-
-const EN_MESSAGES: Messages = {
-  HELP_TITLE,
-  HELP_INTRO,
-  PAUSE_MESSAGES,
-  RESUME_MESSAGES,
-  AUDIT_CLI_HINT,
-  COMMAND_DESCRIPTIONS,
-  NOTIFICATION_MD,
-  NOTIFICATION_PLAIN,
-  EXPLORER_BUTTON_TEXT,
-  MIMIR_APP_BUTTON_TEXT,
-  SETTLEMENT_LABELS,
+const ES_RESUME_MESSAGES: ResumeMessages = {
+  resumed: "*Sondeo reanudado*\nEl siguiente escaneo empieza ahora\\. Los cursores no cambiaron\\.",
+  alreadyRunning: "*El sondeo ya está en marcha*",
+  stopped: "*El sondeo no puede reanudarse* — el proceso se está deteniendo\\.",
 };
 
-function isMessageTable(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+const ES_COMMAND_DESCRIPTIONS: Readonly<Record<CommandName, string>> = {
+  start: "Qué hace este bot",
+  help: "Mostrar ayuda",
+  about: "Acerca de este bot",
+  status: "Último ledger visto y contratos vigilados",
+  audit: "Solo operadores: informe de auditoría (redactado, acotado)",
+  contracts: "Ids de contratos y enlaces al explorador",
+  health: "Evaluación de salud y preparación operativa",
+  preview: "Previsualizar el formato de las notificaciones del canal",
+  pause: "Solo operadores: pausar nuevos escaneos",
+  resume: "Solo operadores: reanudar el sondeo ahora",
+};
 
-/** Merge a (possibly partial) translation over the English base. */
-function mergeOverrides(base: Messages, overrides: MessageOverrides): Messages {
-  const merged: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === undefined) continue;
-    const current = merged[key];
-    merged[key] =
-      isMessageTable(current) && isMessageTable(value) ? { ...current, ...value } : value;
-  }
-  return merged as unknown as Messages;
-}
+const ES_NOTIFICATION_MD: NotificationMarkdownTemplates = {
+  // ── mimir-market ────────────────────────────────────────────────────────
+  claimCreated: (claimId: string, category: string, creator: string): string =>
+    `🆕 *Nueva reclamación* \\#${claimId}\nCategoría: ${category}\nCreador: ${creator}`,
 
-// ── Spanish (es) ────────────────────────────────────────────────────────────
-// MarkdownV2 strings are pre-escaped exactly like the English originals; the
-// caller still escapes every dynamic interpolation.
+  claimChallenged: (claimId: string, stake: string, challenger: string): string =>
+    `⚔️ *Reclamación \\#${claimId} impugnada*\nApuesta: *${stake}*\nImpugnador: ${challenger}`,
 
-const ES_OVERRIDES: MessageOverrides = {
-  HELP_TITLE: "*Notificador de Mimir*",
-  HELP_INTRO:
-    "Vigilo los dos contratos Soroban de Mimir en Stellar y publico aquí cada evento nuevo on-chain: reclamaciones abiertas, desafíos con stake, resoluciones del oráculo, liquidaciones y pagos.",
+  claimResolved: (
+    claimId: string,
+    winnerSide: string,
+    confidence: string,
+    summary: string | null,
+  ): string =>
+    (
+      `⚖️ *Reclamación \\#${claimId} resuelta* — ganador: *${winnerSide}*\n` +
+      `Confianza: ${confidence}\n` +
+      (summary ? `_${summary}_` : "")
+    ).trimEnd(),
 
-  PAUSE_MESSAGES: {
-    paused:
-      "*Sondeo pausado*\nEl escaneo actual puede terminar, pero no se iniciará un ciclo nuevo\\. Los cursores no se modificaron\\.",
-    alreadyPaused: "*El sondeo ya está pausado*",
-    stopped: "*No se puede pausar* — el proceso se está deteniendo\\.",
-  },
-  RESUME_MESSAGES: {
-    resumed:
-      "*Sondeo reanudado*\nEl próximo escaneo comienza ahora\\. Los cursores no se modificaron\\.",
-    alreadyRunning: "*El sondeo ya está en marcha*",
-    stopped: "*No se puede reanudar* — el proceso se está deteniendo\\.",
-  },
+  claimCancelled: (claimId: string): string =>
+    `🚫 *Reclamación \\#${claimId} cancelada* — apuestas devueltas`,
 
-  AUDIT_CLI_HINT:
-    "Consulta `npm run audit -- --help` para la herramienta de informes independiente.",
-
-  COMMAND_DESCRIPTIONS: {
-    start: "Qué hace este bot",
-    help: "Mostrar ayuda",
-    about: "Acerca de este bot",
-    status: "Último ledger visto y contratos vigilados",
-    audit: "Solo operadores: informe de auditoría (redactado y acotado)",
-    contracts: "IDs de contrato y enlaces al explorador",
-    health: "Evaluación de salud y preparación operativa",
-    preview: "Previsualizar el formato de las notificaciones del canal",
-    pause: "Solo operadores: pausar escaneos nuevos",
-    resume: "Solo operadores: reanudar el sondeo ahora",
-  },
-
-  NOTIFICATION_MD: {
-    claimCreated: (claimId: string, category: string, creator: string): string =>
-      `🆕 *Nueva reclamación* \\#${claimId}\nCategoría: ${category}\nCreador: ${creator}`,
-
-    claimChallenged: (claimId: string, stake: string, challenger: string): string =>
-      `⚔️ *Reclamación \\#${claimId} desafiada*\nStake: *${stake}*\nDesafiante: ${challenger}`,
-
-    claimResolved: (
-      claimId: string,
-      winnerSide: string,
-      confidence: string,
-      summary: string | null,
-    ): string =>
-      (
-        `⚖️ *Reclamación \\#${claimId} resuelta* — ganador: *${winnerSide}*\n` +
-        `Confianza: ${confidence}\n` +
-        (summary ? `_${summary}_` : "")
-      ).trimEnd(),
-
-    claimCancelled: (claimId: string): string =>
-      `🚫 *Reclamación \\#${claimId} cancelada* — stakes devueltos`,
-
-    marketSettled: (
-      claimId: string,
-      totalPaid: string,
-      totalFees: string,
-      owedToChallengers: string,
-      ...rest: (readonly string[] | string | undefined)[]
-    ): string => {
-      const lines = rest[0];
-      const linesPart = Array.isArray(lines)
-        ? `\n${lines.join("\n")}`
-        : typeof lines === "string" && lines.length > 0
-          ? `\n${lines}`
-          : "";
-      if (linesPart) {
-        return `💰 *Reclamación \\#${claimId} liquidada*\nPagado: *${totalPaid}* · comisiones ${totalFees}${linesPart}`;
-      }
-      return `💰 *Reclamación \\#${claimId} liquidada*\nPagado: *${totalPaid}* · comisiones ${totalFees}\nAdeudado a desafiantes: ${owedToChallengers}`;
-    },
-
-    challengerPaid: (
-      claimId: string,
-      challenger: string,
-      stake: string,
-      net: string,
-      gross: string,
-      fee: string,
-    ): string =>
-      `🏆 *Desafiante pagado* en la reclamación \\#${claimId}\n${challenger} apostó ${stake} → neto *${net}*\nBruto ${gross} · comisión ${fee}`,
-
-    feeClaimed: (amount: string, recipient: string): string =>
-      `🧾 *Comisiones cobradas* — ${amount} para ${recipient}`,
-
-    withdrawal: (amount: string, to: string): string =>
-      `📤 *Retiro* — ${amount} para ${to}`,
-
-    withdrawalPending: (amount: string, to: string): string =>
-      `⏳ *Retiro en espera* — ${amount} reclamable por ${to}`,
-
-    marketCreated: (
-      marketId: string,
-      question: string,
-      captain: string,
-      feeBps: string,
-      deadline: string,
-    ): string =>
-      `🆕 *Nuevo mercado de escuadrón* \\#${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · fecha límite ${deadline}`,
-
-    deposited: (marketId: string, amount: string, side: string, participant: string): string =>
-      `➕ *Escuadrón \\#${marketId}* — ${amount} en *${side}*\nParticipante: ${participant}`,
-
-    withdrawn: (marketId: string, participant: string, amount: string, side: string): string =>
-      `➖ *Escuadrón \\#${marketId}* — ${participant} retiró ${amount} de ${side}`,
-
-    resolved: (marketId: string, result: string, poolA: string, poolB: string): string =>
-      `🏁 *Escuadrón \\#${marketId} resuelto* — *${result}*\nPozos: A ${poolA} · B ${poolB}`,
-
-    claimed: (
-      marketId: string,
-      participant: string,
-      net: string,
-      gross: string,
-      fee: string,
-    ): string =>
-      `💸 *Pago del escuadrón* en \\#${marketId}\n${participant} → neto *${net}* \\(bruto ${gross}, comisión ${fee}\\)`,
-
-    feesClaimedSquad: (amount: string, recipient: string): string =>
-      `🧾 *Comisiones del escuadrón cobradas* — ${amount} para ${recipient}`,
-
-    fallbackEvent: (
-      source: string,
-      contract: string,
-      ledger: string,
-      reason: string,
-      txPart: string,
-    ): string =>
-      `⚠️ *Notificación de evento alternativa* \\(${source}\\)\nContrato: \`${contract}\` · Ledger: ${ledger}${txPart}\nMotivo: _${reason}_`,
-
-    previewModePrefix: "🧪 *[MODO PREVISUALIZACIÓN]*",
-
-    channelPreviewMarket: "🧪 *Vista previa del canal — mimir\\-market*",
-    channelPreviewSquad: "🧪 *Vista previa del canal — mimir\\-squad*",
+  marketSettled: (
+    claimId: string,
+    totalPaid: string,
+    totalFees: string,
+    owedToChallengers: string,
+    ...rest: (readonly string[] | string | undefined)[]
+  ): string => {
+    const lines = rest[0];
+    const linesPart = Array.isArray(lines)
+      ? `\n${lines.join("\n")}`
+      : typeof lines === "string" && lines.length > 0
+        ? `\n${lines}`
+        : "";
+    if (linesPart) {
+      return `💰 *Reclamación \\#${claimId} liquidada*\nPagado: *${totalPaid}* · comisiones ${totalFees}${linesPart}`;
+    }
+    return `💰 *Reclamación \\#${claimId} liquidada*\nPagado: *${totalPaid}* · comisiones ${totalFees}\nAdeudado a impugnadores: ${owedToChallengers}`;
   },
 
-  NOTIFICATION_PLAIN: {
-    claimCreated: (claimId: string | number, category: string, creator: string): string =>
-      `Nueva reclamación #${claimId}\nCategoría: ${category}\nCreador: ${creator}`,
+  challengerPaid: (
+    claimId: string,
+    challenger: string,
+    stake: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string =>
+    `🏆 *Impugnador pagado* en la reclamación \\#${claimId}\n${challenger} apostó ${stake} → neto *${net}*\nBruto ${gross} · comisión ${fee}`,
 
-    claimChallenged: (
-      claimId: string | number,
-      stake: string,
-      challenger: string,
-    ): string =>
-      `Reclamación #${claimId} desafiada\nStake: ${stake}\nDesafiante: ${challenger}`,
+  feeClaimed: (amount: string, recipient: string): string =>
+    `🧾 *Comisiones reclamadas* — ${amount} a ${recipient}`,
 
-    claimResolved: (
-      claimId: string | number,
-      winnerSide: string,
-      confidence: string,
-      summary: string | null,
-    ): string =>
-      `Reclamación #${claimId} resuelta — ganador: ${winnerSide}\nConfianza: ${confidence}` +
-      (summary ? `\n${summary}` : ""),
+  withdrawal: (amount: string, to: string): string =>
+    `📤 *Retiro* — ${amount} a ${to}`,
 
-    claimCancelled: (claimId: string | number): string =>
-      `Reclamación #${claimId} cancelada — stakes devueltos`,
+  withdrawalPending: (amount: string, to: string): string =>
+    `⏳ *Retiro en espera* — ${amount} reclamable por ${to}`,
 
-    marketSettled: (
-      claimId: string | number,
-      totalPaid: string,
-      totalFees: string,
-      owedToChallengers: string,
-      ...rest: (readonly string[] | string | undefined)[]
-    ): string => {
-      const lines = rest[0];
-      const linesPart = Array.isArray(lines)
-        ? `\n${lines.join("\n")}`
-        : typeof lines === "string" && lines.length > 0
-          ? `\n${lines}`
-          : "";
-      if (linesPart) {
-        return `Reclamación #${claimId} liquidada\nPagado: ${totalPaid} · comisiones ${totalFees}${linesPart}`;
-      }
-      return `Reclamación #${claimId} liquidada\nPagado: ${totalPaid} · comisiones ${totalFees}\nAdeudado a desafiantes: ${owedToChallengers}`;
-    },
+  // ── mimir-squad ─────────────────────────────────────────────────────────
+  marketCreated: (
+    marketId: string,
+    question: string,
+    captain: string,
+    feeBps: string,
+    deadline: string,
+    category?: string | null,
+  ): string =>
+    (
+      `🆕 *Nuevo mercado de escuadrón* \\#${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}` +
+      (category ? `\nCategoría: ${category}` : "")
+    ),
 
-    challengerPaid: (
-      claimId: string | number,
-      challenger: string,
-      stake: string,
-      net: string,
-      gross: string,
-      fee: string,
-    ): string =>
-      `Desafiante pagado en la reclamación #${claimId}\n${challenger} apostó ${stake} → neto ${net}\nBruto ${gross} · comisión ${fee}`,
+  deposited: (marketId: string, amount: string, side: string, participant: string): string =>
+    `➕ *Escuadrón \\#${marketId}* — ${amount} en *${side}*\nParticipante: ${participant}`,
 
-    feeClaimed: (amount: string, recipient: string): string =>
-      `Comisiones cobradas — ${amount} para ${recipient}`,
+  withdrawn: (marketId: string, participant: string, amount: string, side: string): string =>
+    `➖ *Escuadrón \\#${marketId}* — ${participant} retiró ${amount} de ${side}`,
 
-    withdrawal: (amount: string, to: string): string =>
-      `Retiro — ${amount} para ${to}`,
+  resolved: (marketId: string, result: string, poolA: string, poolB: string): string =>
+    `🏁 *Escuadrón \\#${marketId} resuelto* — *${result}*\nPozos: A ${poolA} · B ${poolB}`,
 
-    withdrawalPending: (amount: string, to: string): string =>
-      `Retiro en espera — ${amount} reclamable por ${to}`,
+  claimed: (
+    marketId: string,
+    participant: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string =>
+    `💸 *Pago de escuadrón* en \\#${marketId}\n${participant} → neto *${net}* \\(bruto ${gross}, comisión ${fee}\\)`,
 
-    marketCreated: (
-      marketId: string | number,
-      question: string,
-      captain: string,
-      feeBps: string,
-      deadline: string,
-    ): string =>
-      `Nuevo mercado de escuadrón #${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · fecha límite ${deadline}`,
+  feesClaimedSquad: (amount: string, recipient: string): string =>
+    `🧾 *Comisiones de escuadrón reclamadas* — ${amount} a ${recipient}`,
 
-    deposited: (
-      marketId: string | number,
-      amount: string,
-      side: string,
-      participant: string,
-    ): string =>
-      `Escuadrón #${marketId} — ${amount} en ${side}\nParticipante: ${participant}`,
+  // ── Fallback ─────────────────────────────────────────────────────────────
+  fallbackEvent: (
+    source: string,
+    contract: string,
+    ledger: string,
+    reason: string,
+    txPart: string,
+  ): string =>
+    `⚠️ *Notificación de evento alternativa* \\(${source}\\)\nContrato: \`${contract}\` · Ledger: ${ledger}${txPart}\nMotivo: _${reason}_`,
 
-    withdrawn: (
-      marketId: string | number,
-      participant: string,
-      amount: string,
-      side: string,
-    ): string =>
-      `Escuadrón #${marketId} — ${participant} retiró ${amount} de ${side}`,
+  previewModePrefix: "🧪 *VISTA PREVIA*",
+  channelPreviewMarket: "🧪 *Vista previa del canal — mimir\\-market*",
+  channelPreviewSquad: "🧪 *Vista previa del canal — mimir\\-squad*",
+};
 
-    resolved: (
-      marketId: string | number,
-      result: string,
-      poolA: string,
-      poolB: string,
-    ): string =>
-      `Escuadrón #${marketId} resuelto — ${result}\nPozos: A ${poolA} · B ${poolB}`,
+const ES_NOTIFICATION_PLAIN: NotificationPlainTemplates = {
+  // ── mimir-market ────────────────────────────────────────────────────────
+  claimCreated: (claimId: string | number, category: string, creator: string): string =>
+    `Nueva reclamación #${claimId}\nCategoría: ${category}\nCreador: ${creator}`,
 
-    claimed: (
-      marketId: string | number,
-      participant: string,
-      net: string,
-      gross: string,
-      fee: string,
-    ): string =>
-      `Pago del escuadrón en #${marketId}\n${participant} → neto ${net} (bruto ${gross}, comisión ${fee})`,
+  claimChallenged: (
+    claimId: string | number,
+    stake: string,
+    challenger: string,
+  ): string =>
+    `Reclamación #${claimId} impugnada\nApuesta: ${stake}\nImpugnador: ${challenger}`,
 
-    feesClaimedSquad: (amount: string, recipient: string): string =>
-      `Comisiones del escuadrón cobradas — ${amount} para ${recipient}`,
+  claimResolved: (
+    claimId: string | number,
+    winnerSide: string,
+    confidence: string,
+    summary: string | null,
+  ): string =>
+    `Reclamación #${claimId} resuelta — ganador: ${winnerSide}\nConfianza: ${confidence}` +
+    (summary ? `\n${summary}` : ""),
 
-    minimal: (source: string, ledger: string, eventId: string): string => {
-      const idPart = eventId ? ` (${eventId})` : "";
-      return `Evento de Mimir (${source}) — ${ledger}${idPart}`;
-    },
+  claimCancelled: (claimId: string | number): string =>
+    `Reclamación #${claimId} cancelada — apuestas devueltas`,
+
+  marketSettled: (
+    claimId: string | number,
+    totalPaid: string,
+    totalFees: string,
+    owedToChallengers: string,
+    ...rest: (readonly string[] | string | undefined)[]
+  ): string => {
+    const lines = rest[0];
+    const linesPart = Array.isArray(lines)
+      ? `\n${lines.join("\n")}`
+      : typeof lines === "string" && lines.length > 0
+        ? `\n${lines}`
+        : "";
+    if (linesPart) {
+      return `Reclamación #${claimId} liquidada\nPagado: ${totalPaid} · comisiones ${totalFees}${linesPart}`;
+    }
+    return `Reclamación #${claimId} liquidada\nPagado: ${totalPaid} · comisiones ${totalFees}\nAdeudado a impugnadores: ${owedToChallengers}`;
   },
 
-  EXPLORER_BUTTON_TEXT: "Ver en el explorador",
-  MIMIR_APP_BUTTON_TEXT: "Abrir en Mimir",
+  challengerPaid: (
+    claimId: string | number,
+    challenger: string,
+    stake: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string =>
+    `Impugnador pagado en la reclamación #${claimId}\n${challenger} apostó ${stake} → neto ${net}\nBruto ${gross} · comisión ${fee}`,
 
-  SETTLEMENT_LABELS: {
-    owedToChallengers: "Adeudado a desafiantes",
-    totalFees: "Comisiones totales",
-    dust: "Polvo",
+  feeClaimed: (amount: string, recipient: string): string =>
+    `Comisiones reclamadas — ${amount} a ${recipient}`,
+
+  withdrawal: (amount: string, to: string): string =>
+    `Retiro — ${amount} a ${to}`,
+
+  withdrawalPending: (amount: string, to: string): string =>
+    `Retiro en espera — ${amount} reclamable por ${to}`,
+
+  // ── mimir-squad ─────────────────────────────────────────────────────────
+  marketCreated: (
+    marketId: string | number,
+    question: string,
+    captain: string,
+    feeBps: string,
+    deadline: string,
+    category?: string | null,
+  ): string =>
+    (
+      `Nuevo mercado de escuadrón #${marketId}\n${question}\nCapitán: ${captain} · comisión ${feeBps} bps · plazo ${deadline}` +
+      (category ? `\nCategoría: ${category}` : "")
+    ),
+
+  deposited: (
+    marketId: string | number,
+    amount: string,
+    side: string,
+    participant: string,
+  ): string =>
+    `Escuadrón #${marketId} — ${amount} en ${side}\nParticipante: ${participant}`,
+
+  withdrawn: (
+    marketId: string | number,
+    participant: string,
+    amount: string,
+    side: string,
+  ): string =>
+    `Escuadrón #${marketId} — ${participant} retiró ${amount} de ${side}`,
+
+  resolved: (
+    marketId: string | number,
+    result: string,
+    poolA: string,
+    poolB: string,
+  ): string =>
+    `Escuadrón #${marketId} resuelto — ${result}\nPozos: A ${poolA} · B ${poolB}`,
+
+  claimed: (
+    marketId: string | number,
+    participant: string,
+    net: string,
+    gross: string,
+    fee: string,
+  ): string =>
+    `Pago de escuadrón en #${marketId}\n${participant} → neto ${net} (bruto ${gross}, comisión ${fee})`,
+
+  feesClaimedSquad: (amount: string, recipient: string): string =>
+    `Comisiones de escuadrón reclamadas — ${amount} a ${recipient}`,
+
+  minimal: (source: string, ledger: string, eventId: string): string => {
+    const idPart = eventId ? ` (${eventId})` : "";
+    return `Evento de Mimir (${source}) — ${ledger}${idPart}`;
   },
 };
 
-const BUNDLES: Record<Locale, Messages> = {
+// ── Message catalog ──────────────────────────────────────────────────────────
+
+/** English catalog. The named exports above are this object's fields. */
+export const EN_MESSAGES: Messages = {
+  helpTitle: HELP_TITLE,
+  helpIntro: HELP_INTRO,
+  pauseMessages: PAUSE_MESSAGES,
+  resumeMessages: RESUME_MESSAGES,
+  auditCliHint: AUDIT_CLI_HINT,
+  commandDescriptions: COMMAND_DESCRIPTIONS,
+  notificationMd: NOTIFICATION_MD,
+  notificationPlain: NOTIFICATION_PLAIN,
+  explorerButtonText: EXPLORER_BUTTON_TEXT,
+  mimirAppButtonText: MIMIR_APP_BUTTON_TEXT,
+};
+
+/** Spanish catalog. */
+export const ES_MESSAGES: Messages = {
+  helpTitle: "*Avisador de Mimir*",
+  helpIntro:
+    "Vigilo los dos contratos Soroban de Mimir en Stellar y publico aquí cada nuevo evento en cadena: reclamaciones abiertas, apuestas de impugnación, resoluciones del oráculo, liquidaciones y pagos.",
+  pauseMessages: ES_PAUSE_MESSAGES,
+  resumeMessages: ES_RESUME_MESSAGES,
+  auditCliHint:
+    "Consulta `npm run audit -- --help` para la herramienta de informe independiente.",
+  commandDescriptions: ES_COMMAND_DESCRIPTIONS,
+  notificationMd: ES_NOTIFICATION_MD,
+  notificationPlain: ES_NOTIFICATION_PLAIN,
+  explorerButtonText: "Ver en el explorador",
+  mimirAppButtonText: "Abrir en Mimir",
+};
+
+/** Every locale's catalog. `Record<Locale, ...>` makes a locale mandatory. */
+export const MESSAGES: Readonly<Record<Locale, Messages>> = {
   en: EN_MESSAGES,
-  es: mergeOverrides(EN_MESSAGES, ES_OVERRIDES),
+  es: ES_MESSAGES,
 };
 
-let activeLocale: Locale = DEFAULT_LOCALE;
-
-/** True when `value` is a language this build ships. */
-export function isLocale(value: string): value is Locale {
-  return (SUPPORTED_LOCALES as readonly string[]).includes(value);
-}
-
 /**
- * Map a configured value (e.g. `BOT_LOCALE`) to a supported language. Accepts
- * case and a region suffix (`es-MX`, `es_419`) so a deploy can pass the value
- * its platform already knows; returns null for anything unrecognized.
+ * Catalog for a locale tag, falling back to English when it is unset or not
+ * supported. Config validation rejects unsupported values at boot, so the
+ * fallback only covers hand-built configs and older callers.
  */
-export function normalizeLocale(raw: string | null | undefined): Locale | null {
-  if (typeof raw !== "string") return null;
-  const base = raw.trim().toLowerCase().replace(/_/g, "-").split("-")[0] ?? "";
-  return isLocale(base) ? base : null;
-}
-
-/** The full bundle for `locale`; untranslated keys read as English. */
-export function getMessages(locale: Locale): Messages {
-  return BUNDLES[locale];
-}
-
-/** Choose the language every `messages()` caller renders from. */
-export function setLocale(locale: Locale): void {
-  activeLocale = locale;
-}
-
-/** The language currently rendered; `en` until {@link setLocale} runs. */
-export function getLocale(): Locale {
-  return activeLocale;
-}
-
-/** The active bundle. Call at render time, never capture at import time. */
-export function messages(): Messages {
-  return BUNDLES[activeLocale];
+export function messagesFor(locale?: string | null): Messages {
+  const normalized = locale === undefined || locale === null ? null : normalizeLocale(locale);
+  return MESSAGES[normalized ?? DEFAULT_LOCALE];
 }

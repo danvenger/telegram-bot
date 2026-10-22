@@ -1,5 +1,12 @@
 /**
- * The grammy bot: commands, and the one send path the poller uses.
+ * The grammy bot: command wiring, callback wiring, and the one send path the
+ * poller uses.
+ *
+ * Slash commands live in `src/commands/`, one self-contained module per
+ * command: each declares its own name, visibility, authorization and handler,
+ * and registers itself through `defineCommand`. This file only builds the bot,
+ * walks the registry, and owns the notifier the poller sends through — so
+ * adding a command no longer means editing this file.
  *
  * The bot half is deliberately thin. It answers public status and contract
  * commands plus operator pause/resume controls. Operator controls only change
@@ -7,20 +14,77 @@
  * state. All chain logic lives in `src/poller.ts` and `src/stellar/`.
  */
 
+import { Bot, type Context, type CommandContext } from "grammy";
 import { Bot, InlineKeyboard, type Context, type CommandContext } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { performance } from "node:perf_hooks";
 
 import {
-  escapeMd,
-  formatLastEvent,
-  splitTelegramMessage,
-  previewMessage,
   safeErrorMessage,
+  splitTelegramMessage,
+  type ExplorerKeyboard,
 } from "./notifications/format.js";
-import { formatFeatureFlags } from "./notifications/featureFlags.js";
 import { DEFAULT_SILENT_EVENTS, isSilent } from "./notifications/priority.js";
 export { previewMessage } from "./notifications/format.js";
+import { type BotConfig } from "./config.js";
+import type { ContractSource } from "./stellar/decode.js";
+
+// Importing the catalogue registers every command module as a side effect.
+import {
+  CALLBACK_PAUSE_CANCEL,
+  CALLBACK_PAUSE_CONFIRM,
+  chatAllowed,
+  commandMetadata,
+  operatorAllowed,
+  registeredCommands,
+  visibleCommandMetadata,
+  type CommandDeps,
+  type CommandModule,
+} from "./commands/index.js";
+import { handlePauseConfirmCallback, registerCallbackHandlers } from "./callbacks.js";
+
+// ── Public surface ───────────────────────────────────────────────────────────
+// bot.ts stays the stable entry point for index.ts and the tests; the
+// implementations live with the commands.
+
+export { helpDetailMessage, COMMAND_DETAILS, type CommandDetail } from "./commands/help-detail.js";
+export {
+  CALLBACK_PAUSE_CANCEL,
+  CALLBACK_PAUSE_CONFIRM,
+  contractsKeyboard,
+  operatorKeyboard,
+  pauseConfirmKeyboard,
+  statusKeyboard,
+} from "./commands/keyboards.js";
+export { TELEGRAM_OPTIONS, isChatAllowed, isOperator } from "./commands/runtime.js";
+export {
+  aboutMessage,
+  helpMessage,
+  contractsMessage,
+  healthMessage,
+  lastEventMessage,
+  pauseMessage,
+  resumeMessage,
+  statusMessage,
+} from "./commands/index.js";
+export {
+  CALLBACK_FALLBACK_FEEDBACK,
+  CALLBACK_FALLBACK_PAYLOAD,
+  CALLBACK_UNAUTHORIZED_FEEDBACK,
+  CALLBACK_UNAUTHORIZED_PAYLOAD,
+  PAUSE_CONFIRM_TTL_MS,
+  TELEGRAM_CALLBACK_DATA_MAX_BYTES,
+  handleCallbackQuery,
+  handlePauseConfirmCallback,
+  registerCallbackHandlers,
+  updateOrReplyMessage,
+  validateCallbackData,
+  validatePauseConfirmData,
+  type CallbackActionType,
+  type CallbackValidationResult,
+  type ValidCallbackAction,
+} from "./callbacks.js";
+import { registerBroadcastHandlers } from "./commands/broadcast.js";
 import { formatProvenanceSummary, networkLabel, type BotConfig } from "./config.js";
 import { contractExplorerUrl } from "./stellar/client.js";
 import { buildHealthReport, chainClockLabel } from "./health.js";
@@ -33,10 +97,6 @@ import {
   type AuditFileSummary,
   type AuditLog,
 } from "./audit.js";
-import { messages } from "./i18n.js";
-import { helpDetailMessage } from "./commands/help-detail.js";
-import { aboutMessage } from "./commands/about.js";
-export { helpDetailMessage, COMMAND_DETAILS, type CommandDetail } from "./commands/help-detail.js";
 import {
   AUDIT_CLI_HINT,
   COMMAND_DESCRIPTIONS,
@@ -83,6 +143,26 @@ export {
   sendBroadcast,
 } from "./commands/broadcast.js";
 
+/**
+ * Telegram bot tokens have the shape `<digits>:<35+ url-safe chars>`.
+ * Values pasted from dashboards frequently arrive wrapped in quotes or with
+ * trailing whitespace/newlines, which only surface as a `getMe` failure at
+ * startup. Validate the shape up front and name the problem without ever
+ * echoing the token (or any part of it) into a message or log.
+ */
+export type BotTokenShapeProblem =
+  | "empty"
+  | "surrounding-quotes"
+  | "whitespace"
+  | "missing-colon"
+  | "bad-prefix"
+  | "bad-suffix"
+  | "wrong-shape";
+
+export interface BotTokenShapeResult {
+  ok: boolean;
+  problem?: BotTokenShapeProblem;
+  message?: string;
 // ── Command registry ─────────────────────────────────────────────────────────
 
 /** grammy does not export a CommandContext type; alias Context for compatibility. */
@@ -121,46 +201,6 @@ export const CALLBACK_PAUSE_CANCEL = "pause-cancel" as const;
 
 type PauseCallbackAction = typeof CALLBACK_PAUSE_CONFIRM | typeof CALLBACK_PAUSE_CANCEL;
 
-/** Command name and whether it is operator-only, in help/registration order. */
-const COMMAND_SPECS = [
-  ["start", false],
-  ["help", false],
-  ["about", false],
-  ["status", false],
-  ["audit", true],
-  ["contracts", false],
-  ["health", false],
-  ["preview", false],
-  ["pause", true],
-  ["resume", true],
-] as const;
-
-/**
- * Shared metadata for handlers, help, and Telegram's command menu. Descriptions
- * are getters so they follow the active locale rather than the language that
- * happened to be selected when this module was first imported.
- */
-export const COMMANDS = COMMAND_SPECS.map(([command, operatorOnly]) => ({
-  command,
-  get description(): string {
-    return messages().COMMAND_DESCRIPTIONS[command];
-  },
-  operatorOnly,
-}));
-
-function visibleCommands(config?: BotConfig) {
-  return COMMANDS.filter((command) =>
-    !command.operatorOnly || config === undefined || config.operatorTelegramUserId !== null,
-  );
-}
-
-export function helpMessage(config?: BotConfig): string {
-  const { HELP_TITLE, HELP_INTRO } = messages();
-/** Inline keyboard attached to the pause confirmation message. */
-export function operatorKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("✅ Confirm pause", CALLBACK_PAUSE_CONFIRM)
-    .text("❌ Cancel", CALLBACK_PAUSE_CANCEL);
 export function validatePauseCallbackData(data: unknown): PauseCallbackAction | null {
   return data === CALLBACK_PAUSE_CONFIRM || data === CALLBACK_PAUSE_CANCEL ? data : null;
 }
@@ -177,8 +217,6 @@ const HELP_BASE = [
   "/help — this message",
 ];
 
-function helpMessage(config: BotConfig): string {
-  if (config.operatorTelegramUserId === null) return HELP_BASE.join("\n")
 export function helpMessage(config: BotConfig): string {
   if (config.operatorTelegramUserId === null) return HELP_BASE.join("\n");
   return [
@@ -192,137 +230,67 @@ export function helpMessage(config: BotConfig): string {
   ].join("\n");
 }
 
-export const TELEGRAM_OPTIONS = {
-  parse_mode: "MarkdownV2" as const,
-  link_preview_options: { is_disabled: true },
-};
-
-// ── Inline keyboard callbacks ────────────────────────────────────────────────
-// Callback data is untrusted user input: it is validated before any action
-// runs, and operator actions are authorized exactly like /pause and /resume.
-
-export type CallbackActionType = "status" | "contracts" | "help" | "pause" | "resume" | "broadcast";
-
-export interface ValidCallbackAction {
-  type: CallbackActionType;
-  raw: string;
-}
-
-export type CallbackValidationResult =
-  | { ok: true; action: ValidCallbackAction }
-  | { ok: false; reason: string; fallbackText: string };
-
-/** Telegram's Bot API limits callback_data to 1-64 bytes. */
-export const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
-
-export const CALLBACK_FALLBACK_PAYLOAD =
-  "*Invalid request*\nThe requested action is unrecognized or malformed\\.";
-
-export const CALLBACK_UNAUTHORIZED_PAYLOAD =
-  "*Unauthorized*\nThis action requires operator privileges\\.";
-
-export const CALLBACK_FALLBACK_FEEDBACK = "Invalid or unrecognized action";
-export const CALLBACK_UNAUTHORIZED_FEEDBACK = "Unauthorized: operator only";
-
-
-function isKnownAction(val: string): val is CallbackActionType {
-  return ["status", "contracts", "help", "pause", "resume", "broadcast"].includes(val);
-}
+const BOT_TOKEN_SHAPE = /^\d+:[A-Za-z0-9_-]{35,}$/;
 
 /**
- * Validate untrusted callback-query data before any action is executed.
- * Treats all callback data as untrusted external user input.
+ * Validate a `BOT_TOKEN` value without ever including the token (or any
+ * substring of it) in the returned message. The messages are intentionally
+ * generic so they are safe to log and to surface in a startup error.
+ *
+ * Exported for embedders and for callers that build a bot from their own
+ * configuration; `loadConfig` applies the same rules at startup, so
+ * `createBot` does not reject placeholder tokens.
  */
-export function validateCallbackData(raw: unknown): CallbackValidationResult {
-  if (typeof raw !== "string") {
+export function validateBotTokenShape(raw: unknown): BotTokenShapeResult {
+  if (typeof raw !== "string" || raw.length === 0) {
     return {
       ok: false,
-      reason: "missing-or-non-string",
-      fallbackText: CALLBACK_FALLBACK_FEEDBACK,
+      problem: "empty",
+      message: "BOT_TOKEN is empty; expected <digits>:<35+ url-safe chars>.",
     };
   }
 
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
+  // Surrounding quotes are the most common paste artefact.
+  if (
+    (raw.startsWith('"') && raw.endsWith('"')) ||
+    (raw.startsWith("'") && raw.endsWith("'"))
+  ) {
     return {
       ok: false,
-      reason: "empty",
-      fallbackText: CALLBACK_FALLBACK_FEEDBACK,
+      problem: "surrounding-quotes",
+      message:
+        "BOT_TOKEN is wrapped in quotes; remove the surrounding quotes and retry.",
     };
   }
 
-  const byteLength = Buffer.byteLength(raw, "utf8");
-  if (byteLength > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
+  // Any whitespace anywhere (leading, trailing, or embedded) is rejected.
+  if (/\s/.test(raw)) {
     return {
       ok: false,
-      reason: "exceeds-max-length",
-      fallbackText: CALLBACK_FALLBACK_FEEDBACK,
+      problem: "whitespace",
+      message:
+        "BOT_TOKEN contains whitespace (leading, trailing, or embedded); trim it and retry.",
     };
   }
 
-  // Reject ASCII control characters (including null bytes)
-  if (/[\x00-\x1F\x7F]/.test(raw)) {
+  if (!raw.includes(":")) {
     return {
       ok: false,
-      reason: "control-characters",
-      fallbackText: CALLBACK_FALLBACK_FEEDBACK,
+      problem: "missing-colon",
+      message: "BOT_TOKEN is missing the ':' separator; expected <digits>:<35+ url-safe chars>.",
     };
   }
 
-  // 1. JSON payload: e.g. {"action":"status"}
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(trimmed) as { action?: unknown };
-      if (typeof parsed?.action === "string" && isKnownAction(parsed.action)) {
-        return {
-          ok: true,
-          action: { type: parsed.action, raw },
-        };
-      }
-      return {
-        ok: false,
-        reason: "unknown-json-action",
-        fallbackText: CALLBACK_FALLBACK_FEEDBACK,
-      };
-    } catch {
-      return {
-        ok: false,
-        reason: "malformed-json",
-        fallbackText: CALLBACK_FALLBACK_FEEDBACK,
-      };
-    }
-  }
-
-  // 2. Colon-delimited: e.g. "status:refresh", "mimir:contracts", etc.
-  if (trimmed.includes(":")) {
-    const parts = trimmed.split(":");
-    if (parts[0] === "mimir" && parts[1] && isKnownAction(parts[1])) {
-      return {
-        ok: true,
-        action: { type: parts[1], raw },
-      };
-    }
-    if (parts[0] && isKnownAction(parts[0])) {
-      return {
-        ok: true,
-        action: { type: parts[0], raw },
-      };
-    }
+  if (!BOT_TOKEN_SHAPE.test(raw)) {
     return {
       ok: false,
-      reason: "unknown-action",
-      fallbackText: CALLBACK_FALLBACK_FEEDBACK,
+      problem: "wrong-shape",
+      message:
+        "BOT_TOKEN has the wrong shape; expected <digits>:<35+ url-safe chars>.",
     };
   }
 
-  // 3. Direct action token: "status", "contracts", "help", "pause", "resume"
-  if (isKnownAction(trimmed)) {
-    return {
-      ok: true,
-      action: { type: trimmed, raw },
-    };
-  }
-
+  return { ok: true };
   return {
     ok: false,
     reason: "unknown-action",
@@ -371,7 +339,7 @@ function ago(timestamp: number | null, nowMs: number = Date.now()): string {
 function renderAuditForTelegram(summary: AuditFileSummary, tail: number): string {
   const header = `*Audit* — ${summary.file}`;
   const report = renderAuditReport(summary, { tail });
-  return `${header}\n\n${report}\n\n${messages().AUDIT_CLI_HINT}`;
+  return `${header}\n\n${report}\n\n${AUDIT_CLI_HINT}`;
 }
 
 function cursorPreview(cursor: string | null): string {
@@ -618,7 +586,6 @@ export function contractsMessage(config: BotConfig): string {
 
 /** Exact operator replies, exported for deterministic Telegram payload tests. */
 export function pauseMessage(result: PollerPauseResult): string {
-  const { PAUSE_MESSAGES } = messages();
   switch (result) {
     case "paused":
       return PAUSE_MESSAGES.paused;
@@ -630,7 +597,6 @@ export function pauseMessage(result: PollerPauseResult): string {
 }
 
 export function resumeMessage(result: PollerResumeResult): string {
-  const { RESUME_MESSAGES } = messages();
   switch (result) {
     case "resumed":
       return RESUME_MESSAGES.resumed;
@@ -714,15 +680,12 @@ export interface BotDeps {
 }
 
 /**
- * Returns true when the chat is permitted to use restricted commands.
+ * Shared metadata for handlers, help, and Telegram's command menu.
  *
- * Rules:
- * - If `allowedChatIds` is empty the list is open (any chat may use the
- *   gated commands: /status, /health, /contracts, /preview).
- * - Otherwise the incoming chat id must appear in the list. Both the numeric
- *   id (stored as a number in grammy's ctx.chat.id) and its string form are
- *   compared so that negative group ids such as -1001234567890 match correctly.
+ * Derived from the registry: a command module is the single place that decides
+ * whether a command exists, so this list cannot drift from what is registered.
  */
+export const COMMANDS = commandMetadata();
 export function isChatAllowed(allowedChatIds: readonly string[] | undefined, chatId: number): boolean {
   // Hand-built configs (tests, embedders) may omit the list: treat it as open.
   if (!allowedChatIds || allowedChatIds.length === 0) return true;
@@ -735,27 +698,20 @@ export function isOperator(ctx: Pick<Context, "from">, config: BotConfig): boole
   return operatorId !== null && ctx.from?.id.toString() === operatorId;
 }
 
-/** How many recent audit lines `/audit` renders. A chat message is not a file. */
-const AUDIT_TAIL = 10;
-
-/**
- * Reply with MarkdownV2, splitting when the payload exceeds Telegram's
- * 4096-character `sendMessage` limit. `/help` grows with the command list
- * and `/status` with the watched targets, so either can cross it; the chunks
- * are sent in order.
- */
-async function replyMarkdown(
-  ctx: CommandContext<Context>,
-  text: string,
-  options: typeof TELEGRAM_OPTIONS = TELEGRAM_OPTIONS,
-): Promise<void> {
-  for (const part of splitTelegramMessage(text)) {
-    await ctx.reply(part, options);
-  }
-}
+/** Everything a command handler may need. Kept as an alias for callers/tests. */
+export type BotDeps = CommandDeps;
 
 /** Register command handlers on a grammy-compatible bot (also useful in tests). */
 export function registerCommandHandlers(
+  bot: Bot | {
+    command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => unknown;
+    callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => unknown;
+  },
+  deps: BotDeps,
+): void {
+  const registrar = bot as {
+    command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => unknown;
+    callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => unknown;
   bot: Bot | { command: (name: string, handler: (ctx: CommandContext<Context>) => Promise<void>) => void; callbackQuery?: (filter: string | string[], handler: (ctx: Context) => Promise<void>) => void },
   deps: BotDeps,
 ): void {
@@ -1017,33 +973,40 @@ export async function updateOrReplyMessage(
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   };
 
-  if (ctx.callbackQuery?.message) {
-    try {
-      await ctx.editMessageText(text, options);
-      return;
-    } catch (err) {
-      if (isMessageNotModified(err)) {
-        return;
-      }
-      // If edit failed (e.g. message too old or deleted), fall through to reply
-    }
+  for (const module of registeredCommands()) {
+    registrar.command(module.command, (ctx) => dispatch(module, ctx, deps));
   }
 
-  if (ctx.chat) {
-    await ctx.reply(text, options);
-    return;
-  }
-
-  // no-op: callers that need to target the configured chat should call
-  // `ctx.api.sendMessage(config.chatId, ...)` directly when `ctx.chat` is
-  // unavailable. handleCallbackQuery does this.
+  // The pause confirmation prompt is produced by /pause, so its buttons are
+  // registered alongside it rather than with the generic action callbacks.
+  registrar.callbackQuery?.(
+    [CALLBACK_PAUSE_CONFIRM, CALLBACK_PAUSE_CANCEL],
+    async (ctx: Context) =>
+      handlePauseConfirmCallback(ctx, {
+        config: deps.config,
+        pause: deps.pause ?? (() => "stopped"),
+      }),
+  );
 }
 
-export async function handleCallbackQuery(
-  ctx: Context,
+/**
+ * Run one command module: apply the authorization its metadata declares, then
+ * the handler. Gating here — instead of inside each handler — means a new
+ * operator-only or allowlisted command cannot forget its check.
+ */
+function dispatch(
+  module: CommandModule,
+  ctx: CommandContext<Context>,
   deps: BotDeps,
   nowMs?: number,
 ): Promise<void> {
+  if (module.operatorOnly === true && !operatorAllowed(ctx, deps.config, module.command)) {
+    return Promise.resolve();
+  }
+  if (module.chatAllowlist === true && !chatAllowed(ctx, deps.config, module.command)) {
+    return Promise.resolve();
+  }
+  return module.handler(ctx, deps);
   if (nowMs !== undefined || ctx.callbackQuery?.data === CALLBACK_PAUSE_CONFIRM || ctx.callbackQuery?.data === CALLBACK_PAUSE_CANCEL) {
     await handlePauseCallback(ctx, { config: deps.config, pause: deps.pause }, nowMs);
     return;
@@ -1185,6 +1148,11 @@ export function createBot(deps: BotDeps): Bot {
     deps.config.telegramApiRoot !== undefined && deps.config.telegramApiRoot !== null
       ? { client: { apiRoot: deps.config.telegramApiRoot } }
       : undefined;
+  // Token shape is validated by `loadConfig` at startup, where the operator
+  // can act on the message (`BOT_TOKEN is not a valid Telegram bot token: …`).
+  // It is deliberately not re-litigated here: `createBot` is also the entry
+  // point for tests and embedders that never speak to Telegram, and a
+  // placeholder token must not stop them building a bot.
   const bot = new Bot(
     deps.config.botToken,
     deps.botInfo !== undefined
@@ -1194,25 +1162,6 @@ export function createBot(deps: BotDeps): Bot {
   registerCommandHandlers(bot, deps);
   registerCallbackHandlers(bot, deps);
   registerBroadcastHandlers(bot, deps);
-  const { config, status, logs } = deps;
-
-  bot.command("export", async (ctx) => {
-    // Same authorization model as /audit: recent logs are for the operator.
-    if (!isOperator(ctx, config)) {
-      console.warn(`[bot] ignored unauthorized /export on update ${ctx.update.update_id}`);
-      return;
-    }
-    if (!logs || logs.capacity() === 0) {
-      await ctx.reply("Log export is disabled (LOG_BUFFER_LINES=0).");
-      return;
-    }
-    // Plain text, no parse mode: the content is redacted but untrusted, and
-    // MarkdownV2 would make any escaping slip a parsing error instead of a
-    // cosmetic wart.
-    await ctx.reply(renderLogExport(config, status(), logs), {
-      link_preview_options: { is_disabled: true },
-    });
-  });
 
   // grammy rethrows handler errors by default, which would take the process
   // with it. Keep Telegram/RPC error text bounded and redact known secrets.
@@ -1238,7 +1187,9 @@ export {
 /** Registers the command list so Telegram's UI offers autocompletion. */
 export async function registerCommands(bot: Bot, config?: BotConfig): Promise<void> {
   try {
-    await bot.api.setMyCommands(visibleCommands(config).map(({ command, description }) => ({ command, description })));
+    await bot.api.setMyCommands(
+      visibleCommandMetadata(config).map(({ command, description }) => ({ command, description })),
+    );
   } catch (err) {
     // Cosmetic. Never worth failing a boot over, and never log an unbounded API error.
     console.warn(`[bot] setMyCommands failed: ${safeErrorMessage(err)}`);

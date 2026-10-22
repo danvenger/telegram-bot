@@ -1142,10 +1142,10 @@ configuration. All persisted state and cursor format remain unchanged.
 
 ### Language
 
-All user-facing text comes from `src/i18n.ts`, which ships an English base
-bundle plus translated bundles. Set `BOT_LOCALE` to choose one:
+All user-facing text comes from `src/i18n.ts`, which ships a message catalog per
+locale. Set `MIMIR_LOCALE` to choose one:
 
-| `BOT_LOCALE` | Language |
+| `MIMIR_LOCALE` | Language |
 | --- | --- |
 | `en` (default) | English |
 | `es` | Spanish |
@@ -1155,7 +1155,7 @@ fails startup with the supported list, so a typo cannot silently fall back to
 English. The locale covers notifications, `/help`, the Telegram command menu,
 pause/resume replies and notification buttons; the selected value is logged at
 boot (`[boot] locale …`). See [`docs/translating.md`](docs/translating.md) for
-adding a language — untranslated keys fall back to English.
+adding a language.
 
 ## Layout
 

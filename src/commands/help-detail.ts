@@ -1,6 +1,6 @@
 import { escapeMd } from "../notifications/format.js";
 import type { BotConfig } from "../config.js";
-import { helpMessage } from "../bot.js";
+import { helpMessage } from "./help.js";
 
 export interface CommandDetail {
   usage: string;
@@ -33,7 +33,7 @@ export const COMMAND_DETAILS: Record<string, CommandDetail> = {
     arguments: "None",
     whoCanRun: "Anyone",
     operatorOnly: false,
-    description: "Show the bot version, the Stellar network it watches, and the repository it is built from.",
+    description: "Show the bot version, the Stellar network it watches, and where its source lives.",
     examples: ["/about"],
   },
   status: {

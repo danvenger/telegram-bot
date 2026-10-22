@@ -8,19 +8,20 @@ All notable changes to this project are documented here.
 
 **Selectable bot language**
 
-- `src/i18n.ts` now exposes locale bundles behind `getMessages(locale)` and an
-  active-locale accessor (`setLocale` / `messages` / `getLocale`), with `en` as
-  the base and fallback bundle. A bundle may translate any subset of keys; the
-  rest resolve to English.
-- `BOT_LOCALE` selects the language at startup (`en` default, `es` shipped).
+- `src/i18n.ts` now ships a message catalog per locale behind
+  `messagesFor(locale)`, with `en` as the base and fallback catalog and `es`
+  shipped. The named English exports (`HELP_TITLE`, `NOTIFICATION_MD`, ...) stay
+  the reference strings, so existing imports and tests keep working.
+- `MIMIR_LOCALE` selects the language at startup (`en` default, `es` shipped).
   Case and a region suffix (`es-MX`, `es_419`) are accepted; an unsupported
-  value fails config validation with the supported list. The choice is logged at
-  boot and reported by `configProvenance()`.
+  value fails config validation with the supported list. The choice is carried
+  on the config as `config.locale` and reported by `configProvenance()`.
 - Notifications, the inline keyboard labels, `/help`, the Telegram command menu
-  and pause/resume replies now render from the active bundle, so switching
-  languages does not require rebuilding the call sites.
+  and pause/resume replies now render from the catalog selected by
+  `config.locale`, so switching languages does not require rebuilding the call
+  sites.
 - `docs/translating.md` documents choosing and adding a language;
-  `tests/locale.test.mjs` covers selection and config validation, and the
+  `tests/i18n-locale.test.mjs` covers selection and config validation, and the
   MarkdownV2 linter now validates every shipped locale.
 
 **Per-cycle activity baseline**
