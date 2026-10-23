@@ -1144,6 +1144,7 @@ export const CONFIG_KEYS: readonly ConfigKeySpec[] = [
     },
   },
   { key: "HEALTH_STALE_MS", secret: false, hasBuiltInDefault: true },
+  { key: "HEALTH_AUTH_TOKEN", secret: true },
   { key: "STARTUP_HEALTH_DEADLINE_MS", secret: false, hasBuiltInDefault: true },
   { key: "STARTUP_HEALTH_RETRY_MS", secret: false, hasBuiltInDefault: true },
   { key: "SHUTDOWN_TIMEOUT_MS", secret: false, hasBuiltInDefault: true },
