@@ -407,6 +407,13 @@ function assertEventXdrWithinCap(event: rpc.Api.EventResponse): void {
   }
 }
 function native(value: xdr.ScVal): unknown {
+  // stellar-sdk 16 threw on anything that was not an ScVal; 17 (#527) quietly
+  // returns undefined, which would let garbage decode as an empty payload.
+  // Keep failing closed so malformed values still surface as `unknown`.
+  const v = value as unknown as { type?: unknown } | null;
+  if (v === null || typeof v !== "object" || typeof v.type !== "string") {
+    throw new DecodeError(`expected an ScVal, got ${v === null ? "null" : typeof v}`);
+  }
   return scValToNative(value);
 }
 
