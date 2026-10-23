@@ -367,7 +367,7 @@ test("config provenance never includes setting values", () => {
   withEnv(
     {
       MIMIR_PROFILE: "mock",
-      BOT_TOKEN: "123456789:" + "REAL-SECRET-TOKEN",
+      BOT_TOKEN: "123456789:" + "REAL-SECRET-TOKEN-PADDED-TO-35-CHARS",
       TELEGRAM_CHAT_ID: "-1001234567890",
     },
     () => {

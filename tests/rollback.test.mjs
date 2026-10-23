@@ -46,7 +46,7 @@ import { createPoller } from "../dist/poller.js";
 // ── Valid environment for tests that need a full config ──────────────────────
 
 const VALID_ENV = {
-  BOT_TOKEN:                "123456789:" + "AAHello_test_token",
+  BOT_TOKEN:                "123456789:" + "AAHello_test_token_padded_to_35_chars",
   TELEGRAM_CHAT_ID:         "-1001234567890",
   MARKET_CONTRACT_ID:       "CDV6JXIJCALSXQELCS6YUEWJWG5DFXQK5PJ5I7MWI6KVMQJBC5DLPKZI",
   SQUAD_CONTRACT_ID:        "CBPGVXHXLULUBVZ24D6XNSUX7NH45HYXGWHAJFWTBHXYNO72KDRKCDFY",
