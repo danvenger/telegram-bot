@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { RpcTiming, formatRpcTiming } from '../src/stellar/metrics.js';
+import { RpcTiming, formatRpcTiming } from '../dist/stellar/metrics.js';
 
 // These tests pin the statistics reported by RpcTiming and the
 

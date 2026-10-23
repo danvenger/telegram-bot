@@ -5,7 +5,7 @@ import {
   encodePaginationCallback,
   parsePaginationCallback,
   pageKeyboard,
-} from "../src/notifications/pagination.js";
+} from "../dist/notifications/pagination.js";
 import { InlineKeyboard } from "grammy";
 
 /** Helper to extract callback data from InlineKeyboard buttons */

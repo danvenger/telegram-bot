@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { chainClockLabel } from "../src/health.ts";
+import { chainClockLabel } from "../dist/health.js";
 
 const NOW = Date.parse("2024-01-01T00:00:00Z");
 

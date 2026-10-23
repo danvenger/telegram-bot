@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { eventHistogram } from "../src/stellar/events.js";
+import { eventHistogram } from "../dist/stellar/events.js";
 
 // Deterministic key order rule:
 // eventHistogram returns a plain object whose keys are inserted in first-seen order

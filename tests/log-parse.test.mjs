@@ -7,7 +7,7 @@ import {
   DEFAULT_LOG_FORMAT,
   LOG_LEVELS,
   LOG_FORMATS,
-} from "../src/logger.js";
+} from "../dist/logger.js";
 
 test("parseLogLevel resolves valid and invalid inputs", () => {
   const cases = [

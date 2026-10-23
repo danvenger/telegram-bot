@@ -4,7 +4,7 @@ import {
   displayUsdc,
   displayUsdcMarkdownV2,
   escapeMarkdownV2,
-} from "../src/notifications/amount-display.js";
+} from "../dist/notifications/amount-display.js";
 
 const UNIT = 10n ** 7n; // 1 USDC in 7-decimal units
 

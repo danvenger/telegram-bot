@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { aboutMessage } from "../src/commands/about.js";
+import { aboutMessage } from "../dist/commands/about.js";
 
 test("aboutMessage reports testnet details", () => {
   const message = aboutMessage({ network: "testnet" }, "1.2.3");

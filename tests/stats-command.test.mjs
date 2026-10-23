@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { statsMessage } from '../src/commands/stats.ts';
+import { statsMessage } from '../dist/commands/stats.js';
 
 test('statsMessage renders counters and uptime', () => {
   const now = 100000;

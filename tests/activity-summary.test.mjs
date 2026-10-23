@@ -3,7 +3,7 @@ import assert from "node:assert";
 import {
   buildActivitySummary,
   activitySummaryMessage,
-} from "../src/notifications/activity-summary.js";
+} from "../dist/notifications/activity-summary.js";
 
 test("buildActivitySummary counts events within the window", () => {
   const events = [

@@ -9,7 +9,7 @@ import {
   createScheduler,
   FileLastRunStore,
   ScheduleParseError,
-} from "../src/notifications/schedule.js";
+} from "../dist/notifications/schedule.js";
 
 function fakeClock(startMs) {
   let now = startMs;

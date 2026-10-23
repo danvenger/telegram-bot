@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 
-const modulePath = new URL('../src/subscriptions/store.js', import.meta.url);
+const modulePath = new URL('../dist/subscriptions/store.js', import.meta.url);
 
 async function importStore() {
   return import(modulePath.href);

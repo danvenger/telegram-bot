@@ -4,7 +4,7 @@ import assert from "node:assert";
 import {
   eventExplorerUrl,
   explorerKeyboard,
-} from "../src/notifications/format.ts";
+} from "../dist/notifications/format.js";
 
 const VALID_HASH =
   "0x" +
