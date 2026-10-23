@@ -522,6 +522,9 @@ function collector(profile: Record<string, string>) {
     botToken(name: string): string {
       const value = this.required(name);
       if (value === "") return value;
+      // The mock profile's placeholder is deliberately not token-shaped (it
+      // only ever talks to the fake Telegram server); #658 must not reject it.
+      if (value === MOCK_BOT_TOKEN) return value;
       const problem = describeBotTokenProblem(value);
       if (problem !== null) problems.push(problem);
       return value;
