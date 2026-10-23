@@ -64,8 +64,8 @@ test("activitySummaryMessage renders counts and volumes", () => {
 
   const message = activitySummaryMessage(summary);
 
-  assert.matches(message, /Claims created: 1/);
-  assert.matches(message, /Squad deposits: 1/);
-  assert.matches(message, /Total stake:/);
-  assert.matches(message, /Total deposit volume:/);
+  assert.match(message, /Claims created: 1/);
+  assert.match(message, /Squad deposits: 1/);
+  assert.match(message, /Total stake:/);
+  assert.match(message, /Total deposit volume:/);
 });
