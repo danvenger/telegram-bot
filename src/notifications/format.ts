@@ -31,6 +31,7 @@ import { groupDigestEvents } from "./digest-grouping.js";
 import { confidenceIndicator } from "./confidence.js";
 import { sanitizeUserText } from "./sanitize.js";
 import { settlementLines } from "./settlement.js";
+import { formatSquadResolution, renderSquadResolution } from "./squad-resolution.js";
 import type { StellarConfig } from "../config.js";
 import { messagesFor, type Messages } from "../i18n.js";
 import { formatDeadline } from "./time.js";
@@ -484,12 +485,7 @@ function headline(
       );
 
     case "resolved":
-      return md.resolved(
-        String(p.marketId),
-        escapeMd(squadSideLabel(p.result)),
-        usdc(p.poolA),
-        usdc(p.poolB),
-      );
+      return renderSquadResolution(formatSquadResolution(p), md, escapeMd);
 
     case "claimed":
       return md.claimed(
@@ -701,12 +697,7 @@ function plainHeadline(
       );
 
     case "resolved":
-      return plain.resolved(
-        p.marketId,
-        squadSideLabel(p.result),
-        plainUsdc(p.poolA),
-        plainUsdc(p.poolB),
-      );
+      return renderSquadResolution(formatSquadResolution(p), plain);
 
     case "claimed":
       return plain.claimed(
